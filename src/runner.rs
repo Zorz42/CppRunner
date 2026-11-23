@@ -1,4 +1,4 @@
-use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
+use crate::cache::{CACHE_FILE, Cacheable, Key, ResultCache};
 use crate::check::{accepts, check_hash, checked, tokens_match};
 use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize, is_program_source};
 use crate::exec::run_executable;
@@ -228,13 +228,24 @@ impl Runner {
     /// Queues a run of `source_code` on `input`, compiling it first if needed. Runs start in the
     /// order they are queued. A cached result is returned without running the program.
     pub fn spawn<I: Into<Arc<str>>>(&self, source_code: &str, input: I, limits: Limits) -> Result<RunHandle> {
-        self.queue_run(source_code, input.into(), limits)
+        let input = input.into();
+        let (hash, executable) = self.executable(source_code)?;
+        let key = Key::new(hash, &input, limits);
+        self.queue_measured(key, limits, move || run_executable(&executable, &[], &input, limits))
     }
 
     /// As [`spawn`](Self::spawn), but the output is checked against `answer`, and only whether it
     /// was accepted is kept. That is small, so checked runs are always cached.
     pub fn spawn_checked<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
-        self.queue_checked(source_code, input.into(), answer.into(), check, limits)
+        let (input, answer) = (input.into(), answer.into());
+        let (hash, executable) = self.executable(source_code)?;
+        let checker = self.checker(check)?;
+        let key = Key::checked(hash, &input, check_hash(checker.as_ref().map_or(0, |&(hash, _)| hash), &answer), limits);
+        let build_folder = self.build_folder.clone();
+        self.queue_measured(key, limits, move || {
+            let checker = checker.as_ref().map(|(_, checker)| &**checker);
+            checked(run_executable(&executable, &[], &input, limits)?, |output| accepts(checker, &build_folder, &input, &answer, output))
+        })
     }
 
     /// Queues checking `output` against `answer`: whether `check` accepts it. Only a checker program
@@ -248,10 +259,6 @@ impl Runner {
         self.queue(move |_cache| accepts(Some(&checker), &build_folder, &input, &answer, &output))
     }
 
-    fn caching(&self) -> bool {
-        self.caching.load(Ordering::Relaxed)
-    }
-
     fn checker(&self, check: &Check) -> Result<Option<(u64, Arc<Path>)>> {
         match check {
             Check::Tokens => Ok(None),
@@ -259,41 +266,19 @@ impl Runner {
         }
     }
 
-    fn queue_run(&self, source_code: &str, input: Arc<str>, limits: Limits) -> Result<RunHandle> {
-        let (hash, executable) = self.executable(source_code)?;
-        let key = self.caching().then(|| Key::new(hash, &input, limits));
-        if let Some(Entry::Run(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
+    /// Returns the cached result, or queues `run`, retrying it near the time limit, and caches what it gives.
+    fn queue_measured<T: Cacheable + Output + Send + 'static, F: FnMut() -> Result<RunResult<T>> + Send + 'static>(&self, key: Key, limits: Limits, run: F) -> Result<RunHandle<RunResult<T>>> {
+        let caching = self.caching.load(Ordering::Relaxed);
+        if caching && let Some(cached) = self.shared.cache.get(&key) {
             return Ok(RunHandle::finished(cached, true));
         }
         let retries = self.timing_retries.load(Ordering::Relaxed);
         self.queue(move |cache| {
-            let result = best_of(retries, limits, || run_executable(&executable, &[], &input, limits))?;
-            if let Some(key) = key {
-                cache.insert_run(key, &result);
+            let result = best_of(retries, limits, run)?;
+            if caching {
+                cache.insert(key, &result);
             }
             Ok(result)
-        })
-    }
-
-    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
-        let (hash, executable) = self.executable(source_code)?;
-        let checker = self.checker(check)?;
-        let key = self
-            .caching()
-            .then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map_or(0, |&(hash, _)| hash), &answer), limits));
-        if let Some(Entry::Checked(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
-            return Ok(RunHandle::finished(cached, true));
-        }
-        let build_folder = self.build_folder.clone();
-        let retries = self.timing_retries.load(Ordering::Relaxed);
-        self.queue(move |cache| {
-            let checker = checker.as_ref().map(|(_, checker)| &**checker);
-            let run = || checked(run_executable(&executable, &[], &input, limits)?, |output| accepts(checker, &build_folder, &input, &answer, output));
-            let checked = best_of(retries, limits, run)?;
-            if let Some(key) = key {
-                cache.insert_checked(key, checked);
-            }
-            Ok(checked)
         })
     }
 

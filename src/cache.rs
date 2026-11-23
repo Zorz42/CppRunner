@@ -54,8 +54,38 @@ impl Entry {
     }
 }
 
-pub const fn is_cacheable(result: &RunResult) -> bool {
-    !matches!(result, RunResult::Ok { output, .. } if output.len() > MAX_CACHED_OUTPUT_BYTES)
+/// What a run gives, as the result cache keeps it.
+pub trait Cacheable: Sized {
+    /// `None` for a result too large to be worth keeping.
+    fn entry(result: &RunResult<Self>) -> Option<Entry>;
+    fn from_entry(entry: Entry) -> Option<RunResult<Self>>;
+}
+
+impl Cacheable for String {
+    fn entry(result: &RunResult) -> Option<Entry> {
+        let too_large = matches!(result, RunResult::Ok { output, .. } if output.len() > MAX_CACHED_OUTPUT_BYTES);
+        (!too_large).then(|| Entry::Run(result.clone()))
+    }
+
+    fn from_entry(entry: Entry) -> Option<RunResult> {
+        match entry {
+            Entry::Run(result) => Some(result),
+            Entry::Checked(_) => None,
+        }
+    }
+}
+
+impl Cacheable for bool {
+    fn entry(result: &RunResult<Self>) -> Option<Entry> {
+        Some(Entry::Checked(*result))
+    }
+
+    fn from_entry(entry: Entry) -> Option<RunResult<Self>> {
+        match entry {
+            Entry::Checked(result) => Some(result),
+            Entry::Run(_) => None,
+        }
+    }
 }
 
 /// Results of earlier runs, appended to a file in the build folder that several processes may share.
@@ -89,22 +119,13 @@ impl ResultCache {
         })
     }
 
-    pub fn get(&self, key: &Key) -> Option<Entry> {
-        self.entries().lock().ok()?.get(key).cloned()
-    }
-
-    pub fn insert_run(&self, key: Key, result: &RunResult) {
-        if is_cacheable(result) {
-            self.insert(key, Entry::Run(result.clone()));
-        }
-    }
-
-    pub fn insert_checked(&self, key: Key, result: RunResult<bool>) {
-        self.insert(key, Entry::Checked(result));
+    pub fn get<T: Cacheable>(&self, key: &Key) -> Option<RunResult<T>> {
+        T::from_entry(self.entries().lock().ok()?.get(key)?.clone())
     }
 
     /// Writes while holding the lock, so that lines from this process never interleave.
-    fn insert(&self, key: Key, entry: Entry) {
+    pub fn insert<T: Cacheable>(&self, key: Key, result: &RunResult<T>) {
+        let Some(entry) = T::entry(result) else { return };
         let Ok(mut line) = serde_json::to_string(&(key, &entry)) else { return };
         line.push('\n');
         let Ok(mut entries) = self.entries().lock() else { return };

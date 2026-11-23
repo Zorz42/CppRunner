@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// How a run ended. `O` is what a successful run gives: its output, or for a
+/// How a run ended. `T` is what a successful run gives: its output, or for a
 /// [checked](crate::Runner::spawn_checked) run whether the output was accepted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum RunResult<T = String> {
