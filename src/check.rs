@@ -23,10 +23,10 @@ pub fn tokens_match(output: &str, answer: &str) -> bool {
     output.split_whitespace().eq(answer.split_whitespace())
 }
 
-/// Identifies the check of an output against `answer`, for the result cache.
-pub fn check_hash(checker: Option<u64>, answer: &str) -> u64 {
-    let checker = checker.map(u64::to_le_bytes);
-    stable_hash(&[checker.as_ref().map_or(&[][..], |checker| &checker[..]), answer.as_bytes()])
+/// Identifies the check of an output against `answer` for the result cache; `checker` is the hash of
+/// the checker program, or zero for token comparison.
+pub fn check_hash(checker: u64, answer: &str) -> u64 {
+    stable_hash(&[&checker.to_le_bytes(), answer.as_bytes()])
 }
 
 /// Whether `output` is accepted: by token comparison without a checker executable.
@@ -35,12 +35,11 @@ pub fn accepts(checker: Option<&Path>, build_folder: &Path, input: &str, answer:
         return Ok(tokens_match(output, answer));
     };
     let scratch = tempfile::Builder::new().prefix(SCRATCH_PREFIX).tempdir_in(build_folder).map_err(Error::io(build_folder))?;
-    let files = [("input.txt", input), ("output.txt", output), ("answer.txt", answer)].map(|(name, contents)| {
+    let write = |name: &str, contents: &str| {
         let path = scratch.path().join(name);
         std::fs::write(&path, contents).map_err(Error::io(&path)).map(|()| path)
-    });
-    let [input, output, answer] = files;
-    let (input, output, answer) = (input?, output?, answer?);
+    };
+    let (input, output, answer) = (write("input.txt", input)?, write("output.txt", output)?, write("answer.txt", answer)?);
     let limits = Limits::new().with_time_ms(CHECKER_TIME_MS);
     match run_executable(checker, &[&input, &output, &answer], "", limits)? {
         RunResult::Ok { .. } => Ok(true),

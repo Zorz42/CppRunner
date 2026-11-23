@@ -1,16 +1,15 @@
 use crate::compiler::{Compiler, canonicalize, find_compiler, install};
+use crate::tests::common::{HELLO_WORLD, files_in};
 use crate::{Error, Runner};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-const HELLO_WORLD: &str = "#include <iostream>\nint main() { std::cout << \"Hello, World!\" << std::endl; }";
-
 fn compile(dir: &Path, source_code: &str) -> crate::Result<PathBuf> {
     let source = dir.join("test.cpp");
     std::fs::write(&source, source_code).unwrap();
-    let executable = Compiler::executable_path(&source)?;
+    let executable = Compiler::executable_path(&source);
     Compiler::detect()?.compile(&source, &executable)?;
     Ok(executable)
 }
@@ -19,12 +18,6 @@ fn stdout_of(executable: &Path) -> String {
     let output = Command::new(executable).output().unwrap();
     assert!(output.status.success(), "{output:?}");
     String::from_utf8(output.stdout).unwrap()
-}
-
-fn files_in(folder: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<_> = std::fs::read_dir(folder).unwrap().map(|entry| entry.unwrap().path()).collect();
-    files.sort();
-    files
 }
 
 #[test]
@@ -84,44 +77,12 @@ fn missing_source_is_a_compiler_error() {
 }
 
 #[test]
-fn executable_path_extension() {
-    let executable = Compiler::executable_path(&TempDir::new().unwrap().path().join("foo.cpp")).unwrap();
+fn executable_path_sits_next_to_the_source() {
+    let executable = Compiler::executable_path(Path::new("/build/p1.cpp"));
     #[cfg(windows)]
-    assert_eq!(executable.file_name().unwrap(), "foo.exe");
+    assert_eq!(executable, Path::new("/build/p1.exe"));
     #[cfg(unix)]
-    assert_eq!(executable.file_name().unwrap(), "foo");
-}
-
-#[test]
-fn executable_path_never_overwrites_the_source() {
-    let dir = TempDir::new().unwrap();
-    let source = dir.path().join("noextension");
-    std::fs::write(&source, "int main(){return 0;}").unwrap();
-
-    let executable = Compiler::executable_path(&source).unwrap();
-
-    assert_ne!(executable, source);
-    assert!(executable.is_absolute(), "{executable:?}");
-    assert!(!executable.exists(), "{executable:?}");
-}
-
-#[test]
-fn executable_path_stays_in_its_directory() {
-    let dir = TempDir::new().unwrap();
-    let executable = Compiler::executable_path(&dir.path().join("prog.cpp")).unwrap();
-    assert_eq!(executable.parent(), Some(dunce::canonicalize(dir.path()).unwrap().as_path()));
-}
-
-#[test]
-fn executable_path_of_a_relative_source_is_absolute() {
-    let executable = Compiler::executable_path(Path::new("prog.cpp")).unwrap();
-    assert!(executable.is_absolute(), "{executable:?}");
-    assert_eq!(executable.parent(), Some(dunce::canonicalize(".").unwrap().as_path()));
-}
-
-#[test]
-fn executable_path_of_a_missing_directory_is_an_error() {
-    assert!(matches!(Compiler::executable_path(Path::new("/no/such/dir/prog.cpp")), Err(Error::Io { .. })));
+    assert_eq!(executable, Path::new("/build/p1"));
 }
 
 #[test]

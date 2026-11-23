@@ -12,10 +12,10 @@ fn tokens_ignore_whitespace_only() {
 
 #[test]
 fn check_hashes_differ_by_checker_and_answer() {
-    assert_eq!(check_hash(None, "1"), check_hash(None, "1"));
-    assert_ne!(check_hash(None, "1"), check_hash(None, "2"));
-    assert_ne!(check_hash(None, "1"), check_hash(Some(5), "1"));
-    assert_ne!(check_hash(Some(5), "1"), check_hash(Some(6), "1"));
+    assert_eq!(check_hash(0, "1"), check_hash(0, "1"));
+    assert_ne!(check_hash(0, "1"), check_hash(0, "2"));
+    assert_ne!(check_hash(0, "1"), check_hash(5, "1"));
+    assert_ne!(check_hash(5, "1"), check_hash(6, "1"));
 }
 
 #[test]

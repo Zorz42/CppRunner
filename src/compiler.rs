@@ -74,7 +74,6 @@ pub fn install(scratch: &Path, destination: &Path) -> Result<()> {
     })
 }
 
-/// Whether `path` is the source of a program [`Compiler::compile_cached`] compiled.
 pub fn is_program_source(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     name.strip_prefix('p')
@@ -102,19 +101,8 @@ impl Compiler {
         })
     }
 
-    pub fn executable_path(source: &Path) -> Result<PathBuf> {
-        let mut executable = source.with_extension(std::env::consts::EXE_EXTENSION);
-        if executable == source {
-            let mut file_name = executable.file_name().unwrap_or_default().to_os_string();
-            file_name.push("_bin");
-            executable.set_file_name(file_name);
-        }
-
-        let file_name = executable
-            .file_name()
-            .ok_or_else(|| Error::io(source)(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the path has no file name")))?;
-        let parent = executable.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-        Ok(canonicalize(parent)?.join(file_name))
+    pub fn executable_path(source: &Path) -> PathBuf {
+        source.with_extension(std::env::consts::EXE_EXTENSION)
     }
 
     pub fn compile(&self, source: &Path, executable: &Path) -> Result<()> {
@@ -143,14 +131,6 @@ impl Compiler {
                 stdout: String::from_utf8_lossy(&process.stdout).into_owned(),
             });
         }
-
-        if !executable.exists() {
-            return Err(Error::CompilerError {
-                stderr: "Output file was not created".to_owned(),
-                stdout: String::new(),
-            });
-        }
-
         Ok(())
     }
 
@@ -158,18 +138,18 @@ impl Compiler {
         stable_hash(&[source_code.as_bytes(), self.path.as_os_str().as_encoded_bytes(), env!("CARGO_PKG_VERSION").as_bytes()])
     }
 
-    /// `build_folder` must be canonical. Compiles in a private scratch folder and renames the results into place, so that threads and
+    /// Compiles in a private scratch folder and renames the results into place, so that threads and
     /// processes sharing the build folder never see half-written files.
     pub fn compile_cached(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
         let hash = self.program_hash(source_code);
         let source = build_folder.join(format!("p{hash}.cpp"));
-        let executable = Self::executable_path(&source)?;
+        let executable = Self::executable_path(&source);
         if !executable.exists() {
             trace!("Compiling: {}", executable.display());
             let scratch = tempfile::Builder::new().prefix(SCRATCH_PREFIX).tempdir_in(build_folder).map_err(Error::io(build_folder))?;
             let scratch_source = scratch.path().join(format!("p{hash}.cpp"));
             std::fs::write(&scratch_source, source_code).map_err(Error::io(&scratch_source))?;
-            let scratch_executable = Self::executable_path(&scratch_source)?;
+            let scratch_executable = Self::executable_path(&scratch_source);
             let compiled = self.compile(&scratch_source, &scratch_executable).and_then(|()| install(&scratch_executable, &executable));
             install(&scratch_source, &source)?;
             compiled?;

@@ -1,4 +1,4 @@
-use crate::exec::{Exit, Usage, poll_interval};
+use crate::exec::{Usage, poll_interval};
 use crate::{Limits, RunResult};
 use std::io;
 use std::os::windows::io::AsRawHandle;
@@ -76,22 +76,22 @@ pub fn wait(program: &mut Child, limits: Limits, deadline: Instant) -> io::Resul
     let job = Job::new(process, limits);
     let cpu_limit_ms = limits.cpu_seconds() * 1000;
     let start = Instant::now();
-    let exit = loop {
+    let failure = loop {
         if let Some(status) = program.try_wait()? {
             break match status.code() {
-                Some(0) => Exit::Success,
-                code => Exit::Failure(RunResult::ExitCode(code.unwrap_or(-1))),
+                Some(0) => None,
+                code => Some(RunResult::ExitCode(code.unwrap_or(-1))),
             };
         }
         if cpu_time_ms(process) > cpu_limit_ms || Instant::now() >= deadline {
             let _ = program.kill();
             program.wait()?;
-            break Exit::OutOfTime;
+            break Some(RunResult::TimedOut);
         }
         std::thread::sleep(poll_interval(start.elapsed()));
     };
     Ok(Usage {
-        exit,
+        failure,
         cpu_time_ms: cpu_time_ms(process),
         peak_memory_kb: job.as_ref().map_or(0, Job::peak_memory_kb),
     })

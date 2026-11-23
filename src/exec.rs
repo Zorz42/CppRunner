@@ -7,16 +7,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Exit {
-    Success,
-    /// A non-zero exit code or a signal.
-    Failure(RunResult),
-    OutOfTime,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Usage {
-    pub exit: Exit,
+    pub failure: Option<RunResult>,
     pub cpu_time_ms: u64,
     pub peak_memory_kb: u64,
 }
@@ -68,12 +60,12 @@ pub fn run_executable(executable: &Path, args: &[&Path], input: &str, limits: Li
     let time_ms = usage.cpu_time_ms;
     let over_memory_limit = limits.memory_kb.is_some_and(|limit| usage.peak_memory_kb > limit);
 
-    Ok(match usage.exit {
-        Exit::OutOfTime => RunResult::TimedOut,
+    Ok(match usage.failure {
+        Some(RunResult::TimedOut) => RunResult::TimedOut,
         _ if over_memory_limit => RunResult::MemoryLimitExceeded,
-        Exit::Failure(result) => result,
-        Exit::Success if time_ms > limits.effective_time_ms() => RunResult::TimedOut,
-        Exit::Success => {
+        Some(failure) => failure,
+        None if time_ms > limits.effective_time_ms() => RunResult::TimedOut,
+        None => {
             let output = String::from_utf8(stdout).unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
             #[cfg(windows)]
             let output = output.replace("\r\n", "\n");

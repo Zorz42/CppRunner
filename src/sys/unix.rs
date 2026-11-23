@@ -1,4 +1,4 @@
-use crate::exec::{Exit, Usage, poll_interval};
+use crate::exec::{Usage, poll_interval};
 use crate::{Limits, RunResult};
 use nix::errno::Errno;
 use nix::sys::resource::{Resource, getrlimit, setrlimit};
@@ -74,17 +74,16 @@ fn wait4(pid: libc::pid_t, options: libc::c_int) -> io::Result<Option<Usage>> {
     }
 
     let status = ExitStatus::from_raw(status);
-    let exit = match (status.code(), status.signal()) {
-        (Some(0), _) => Exit::Success,
-        (_, Some(signal)) if signal == Signal::SIGXCPU as i32 || signal == Signal::SIGKILL as i32 => Exit::OutOfTime,
-        (_, Some(signal)) => Exit::Failure(RunResult::Signal(signal)),
-        (Some(code), None) => Exit::Failure(RunResult::ExitCode(code)),
-        (None, None) => Exit::Failure(RunResult::ExitCode(-1)),
+    let failure = match (status.code(), status.signal()) {
+        (Some(0), _) => None,
+        (_, Some(signal)) if signal == Signal::SIGXCPU as i32 || signal == Signal::SIGKILL as i32 => Some(RunResult::TimedOut),
+        (_, Some(signal)) => Some(RunResult::Signal(signal)),
+        (code, None) => Some(RunResult::ExitCode(code.unwrap_or(-1))),
     };
     let ms = |time: libc::timeval| time.tv_sec as u64 * 1000 + time.tv_usec as u64 / 1000;
     let peak_memory = usage.ru_maxrss as u64;
     Ok(Some(Usage {
-        exit,
+        failure,
         cpu_time_ms: ms(usage.ru_utime) + ms(usage.ru_stime),
         // ru_maxrss is in bytes on macOS and in kilobytes elsewhere.
         peak_memory_kb: if cfg!(target_os = "macos") { peak_memory / 1024 } else { peak_memory },

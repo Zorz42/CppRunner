@@ -3,7 +3,7 @@ use crate::{Limits, RunResult};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -62,10 +62,7 @@ impl Entry {
 }
 
 pub const fn is_cacheable(result: &RunResult) -> bool {
-    match result {
-        RunResult::Ok { output, .. } => output.len() <= MAX_CACHED_OUTPUT_BYTES,
-        RunResult::TimedOut | RunResult::MemoryLimitExceeded | RunResult::ExitCode(_) | RunResult::Signal(_) | RunResult::OutputLimitExceeded => true,
-    }
+    !matches!(result, RunResult::Ok { output, .. } if output.len() > MAX_CACHED_OUTPUT_BYTES)
 }
 
 /// Results of earlier runs, appended to a file in the build folder that several processes may share.
@@ -73,7 +70,6 @@ pub const fn is_cacheable(result: &RunResult) -> bool {
 pub struct ResultCache {
     path: PathBuf,
     entries: OnceLock<Mutex<HashMap<Key, Entry>>>,
-    file: Mutex<Option<File>>,
 }
 
 fn keep_better(entries: &mut HashMap<Key, Entry>, key: Key, entry: Entry) -> bool {
@@ -86,11 +82,7 @@ fn keep_better(entries: &mut HashMap<Key, Entry>, key: Key, entry: Entry) -> boo
 
 impl ResultCache {
     pub const fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            entries: OnceLock::new(),
-            file: Mutex::new(None),
-        }
+        Self { path, entries: OnceLock::new() }
     }
 
     fn entries(&self) -> &Mutex<HashMap<Key, Entry>> {
@@ -118,6 +110,7 @@ impl ResultCache {
         self.insert(key, Entry::Checked(result));
     }
 
+    /// Writes while holding the lock, so that lines from this process never interleave.
     fn insert(&self, key: Key, entry: Entry) {
         let Ok(mut line) = serde_json::to_string(&(key, &entry)) else { return };
         line.push('\n');
@@ -125,17 +118,8 @@ impl ResultCache {
         if !keep_better(&mut entries, key, entry) {
             return;
         }
-        drop(entries);
-        let Ok(mut file) = self.file.lock() else { return };
-        if file.is_none() {
-            match OpenOptions::new().create(true).append(true).open(&self.path) {
-                Ok(opened) => *file = Some(opened),
-                Err(err) => return warn!("Could not open the result cache {}: {err}", self.path.display()),
-            }
-        }
-        if let Some(file) = file.as_mut()
-            && let Err(err) = file.write_all(line.as_bytes())
-        {
+        let written = OpenOptions::new().create(true).append(true).open(&self.path).and_then(|mut file| file.write_all(line.as_bytes()));
+        if let Err(err) = written {
             warn!("Could not write to the result cache {}: {err}", self.path.display());
         }
     }

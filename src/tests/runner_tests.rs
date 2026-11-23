@@ -72,26 +72,12 @@ fn same_program_is_compiled_once() {
 }
 
 #[test]
-fn build_folder_is_canonical() {
-    let (dir, runner) = runner();
-    assert_eq!(runner.build_folder(), dunce::canonicalize(dir.path()).unwrap());
-}
-
-#[test]
 fn build_folder_is_created() {
     let dir = TempDir::new().unwrap();
     let nested = dir.path().join("a").join("b");
     let runner = Runner::new(&nested).unwrap();
     assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
     assert!(nested.is_dir());
-}
-
-#[test]
-fn program_hash_is_stable_across_runners() {
-    let dir = TempDir::new().unwrap();
-    let hash = |source: &str| Runner::new(dir.path()).unwrap().program_hash(source);
-    assert_eq!(hash(HELLO_WORLD), hash(HELLO_WORLD));
-    assert_ne!(hash(HELLO_WORLD), hash(ECHO));
 }
 
 #[test]
@@ -475,16 +461,4 @@ fn clean_build_folder_removes_programs_of_other_runners() {
 
     assert_eq!(files_in(dir.path()).len(), 2);
     assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
-}
-
-#[test]
-fn clean_build_folder_spares_kept_files() {
-    let (_dir, runner) = runner();
-    let kept = runner.build_folder().join("cache.json");
-    std::fs::write(&kept, "{}").unwrap();
-    runner.keep(kept.clone());
-
-    runner.clean_build_folder().unwrap();
-
-    assert!(kept.exists());
 }

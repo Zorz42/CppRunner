@@ -1,5 +1,5 @@
 use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
-use crate::check::{accepts, check_hash, checked};
+use crate::check::{accepts, check_hash, checked, tokens_match};
 use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize, is_program_source};
 use crate::exec::run_executable;
 use crate::{Check, Error, Limits, Result, RunResult};
@@ -179,12 +179,6 @@ impl Runner {
         })
     }
 
-    /// The build folder, canonicalized.
-    #[must_use]
-    pub fn build_folder(&self) -> &Path {
-        &self.build_folder
-    }
-
     /// How many programs run at once.
     #[must_use]
     pub fn workers(&self) -> usize {
@@ -203,12 +197,6 @@ impl Runner {
     /// by default.
     pub fn set_result_cache(&self, enabled: bool) {
         self.caching.store(enabled, Ordering::Relaxed);
-    }
-
-    /// Identifies `source_code` and the compiler; stable across runs.
-    #[must_use]
-    pub fn program_hash(&self, source_code: &str) -> u64 {
-        self.compiler.program_hash(source_code)
     }
 
     /// Compiles `source_code` unless it is compiled already. Running a program compiles it too; this
@@ -258,7 +246,7 @@ impl Runner {
     pub fn spawn_check<I: Into<Arc<str>>, A: Into<Arc<str>>, O: Into<Arc<str>>>(&self, check: &Check, input: I, answer: A, output: O) -> Result<RunHandle<bool>> {
         let (input, answer, output) = (input.into(), answer.into(), output.into());
         let Some((_, checker)) = self.checker(check)? else {
-            return Ok(RunHandle::finished(accepts(None, &self.build_folder, &input, &answer, &output)?, false));
+            return Ok(RunHandle::finished(tokens_match(&output, &answer), false));
         };
         let build_folder = self.build_folder.clone();
         self.queue(move |_cache| accepts(Some(&checker), &build_folder, &input, &answer, &output))
@@ -293,7 +281,9 @@ impl Runner {
     fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits, use_cached: bool) -> Result<RunHandle<RunResult<bool>>> {
         let (hash, executable) = self.executable(source_code)?;
         let checker = self.checker(check)?;
-        let key = self.caching().then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map(|&(hash, _)| hash), &answer), limits));
+        let key = self
+            .caching()
+            .then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map_or(0, |&(hash, _)| hash), &answer), limits));
         if use_cached && let Some(Entry::Checked(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
             return Ok(RunHandle::finished(cached, true));
         }
@@ -350,23 +340,22 @@ impl Runner {
                 continue;
             }
             debug!("Removing {}, unused for over a week", source.display());
-            let removed = Compiler::executable_path(&source).and_then(|executable| match std::fs::remove_file(&executable) {
-                Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(Error::io(&executable)(err)),
-                _ => std::fs::remove_file(&source).map_err(Error::io(&source)),
-            });
+            let removed = match std::fs::remove_file(Compiler::executable_path(&source)) {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+                _ => std::fs::remove_file(&source),
+            };
             if let Err(err) = removed {
-                warn!("Could not remove an unused program: {err}");
+                warn!("Could not remove the unused program {}: {err}", source.display());
             }
         }
     }
 
-    /// Keeps `file` when [`clean_build_folder`](Self::clean_build_folder) runs.
-    pub fn keep(&self, file: PathBuf) {
+    fn keep(&self, file: PathBuf) {
         lock(&self.kept).insert(file);
     }
 
     /// Removes every file of the build folder that belongs to no program this runner compiled, except
-    /// the result cache and kept files.
+    /// the result cache.
     pub fn clean_build_folder(&self) -> Result<()> {
         let kept = lock(&self.kept).clone();
         for entry in std::fs::read_dir(&self.build_folder).map_err(Error::io(&self.build_folder))? {
