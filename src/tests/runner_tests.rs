@@ -227,7 +227,7 @@ fn mixed_verdicts() {
     let [echo_1, crashed, hung, echo_2] = handles.map(|handle| handle.wait().unwrap());
 
     assert_output(&echo_1, "1");
-    assert!(matches!(crashed, RunResult::Crashed(_)));
+    assert_eq!(crashed, RunResult::ExitCode(1));
     assert_eq!(hung, RunResult::TimedOut);
     assert_output(&echo_2, "2");
 }
@@ -357,7 +357,7 @@ fn failures_are_cached() {
 
     let first: Vec<_> = programs.iter().map(|program| run_on(&runner, program, "", limits).unwrap()).collect();
     assert_eq!(first[0], RunResult::TimedOut);
-    assert!(matches!(first[1], RunResult::Crashed(_)));
+    assert_eq!(first[1], RunResult::ExitCode(3));
     assert_eq!(first[2], RunResult::MemoryLimitExceeded);
 
     let start = Instant::now();

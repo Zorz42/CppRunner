@@ -1,7 +1,7 @@
 use crate::compiler::SCRATCH_PREFIX;
 use crate::exec::run_executable;
 use crate::hash::stable_hash;
-use crate::{CrashReason, Error, Limits, Result, RunResult, Verdict};
+use crate::{Error, Limits, Result, RunResult};
 use std::path::Path;
 
 /// The CPU time a checker program may use on one output.
@@ -44,22 +44,22 @@ pub fn accepts(checker: Option<&Path>, build_folder: &Path, input: &str, answer:
     let limits = Limits::new().with_time_ms(CHECKER_TIME_MS);
     match run_executable(checker, &[&input, &output, &answer], "", limits)? {
         RunResult::Ok { .. } => Ok(true),
-        RunResult::Crashed(CrashReason::ExitCode(1 | 2)) => Ok(false),
+        RunResult::ExitCode(1 | 2) => Ok(false),
         ending => Err(Error::CheckerFailed { details: format!("{ending:?}") }),
     }
 }
 
-pub fn verdict<F: FnOnce(&str) -> Result<bool>>(result: RunResult, accepted: F) -> Result<Verdict> {
+pub fn checked<F: FnOnce(&str) -> Result<bool>>(result: RunResult, accepted: F) -> Result<RunResult<bool>> {
     Ok(match result {
-        RunResult::Ok { time_ms, memory_kb, output } => {
-            if accepted(&output)? {
-                Verdict::Accepted { time_ms, memory_kb }
-            } else {
-                Verdict::WrongAnswer
-            }
-        }
-        RunResult::TimedOut => Verdict::TimedOut,
-        RunResult::MemoryLimitExceeded => Verdict::MemoryLimitExceeded,
-        RunResult::Crashed(reason) => Verdict::Crashed(reason),
+        RunResult::Ok { time_ms, memory_kb, output } => RunResult::Ok {
+            time_ms,
+            memory_kb,
+            output: accepted(&output)?,
+        },
+        RunResult::TimedOut => RunResult::TimedOut,
+        RunResult::MemoryLimitExceeded => RunResult::MemoryLimitExceeded,
+        RunResult::ExitCode(code) => RunResult::ExitCode(code),
+        RunResult::Signal(signal) => RunResult::Signal(signal),
+        RunResult::OutputLimitExceeded => RunResult::OutputLimitExceeded,
     })
 }

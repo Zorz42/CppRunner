@@ -1,19 +1,20 @@
 use crate::sys;
-use crate::{CrashReason, Error, Limits, Result, RunResult};
+use crate::{Error, Limits, Result, RunResult};
 use log::{debug, trace};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Exit {
     Success,
-    Failure(CrashReason),
+    /// A non-zero exit code or a signal.
+    Failure(RunResult),
     OutOfTime,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Usage {
     pub exit: Exit,
     pub cpu_time_ms: u64,
@@ -61,7 +62,7 @@ pub fn run_executable(executable: &Path, args: &[&Path], input: &str, limits: Li
 
     let Some(stdout) = stdout else {
         debug!("Program wrote more than {} bytes to stdout and was stopped", limits.output_bytes);
-        return Ok(RunResult::Crashed(CrashReason::OutputLimitExceeded));
+        return Ok(RunResult::OutputLimitExceeded);
     };
 
     let time_ms = usage.cpu_time_ms;
@@ -70,7 +71,7 @@ pub fn run_executable(executable: &Path, args: &[&Path], input: &str, limits: Li
     Ok(match usage.exit {
         Exit::OutOfTime => RunResult::TimedOut,
         _ if over_memory_limit => RunResult::MemoryLimitExceeded,
-        Exit::Failure(reason) => RunResult::Crashed(reason),
+        Exit::Failure(result) => result,
         Exit::Success if time_ms > limits.effective_time_ms() => RunResult::TimedOut,
         Exit::Success => {
             let output = String::from_utf8(stdout).unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());

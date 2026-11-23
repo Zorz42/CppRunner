@@ -1,5 +1,5 @@
 use crate::exec::{Exit, Usage, poll_interval};
-use crate::{CrashReason, Limits};
+use crate::{Limits, RunResult};
 use nix::errno::Errno;
 use nix::sys::resource::{Resource, getrlimit, setrlimit};
 use nix::sys::signal::{Signal, kill};
@@ -77,9 +77,9 @@ fn wait4(pid: libc::pid_t, options: libc::c_int) -> io::Result<Option<Usage>> {
     let exit = match (status.code(), status.signal()) {
         (Some(0), _) => Exit::Success,
         (_, Some(signal)) if signal == Signal::SIGXCPU as i32 || signal == Signal::SIGKILL as i32 => Exit::OutOfTime,
-        (_, Some(signal)) => Exit::Failure(CrashReason::Signal(signal)),
-        (Some(code), None) => Exit::Failure(CrashReason::ExitCode(code)),
-        (None, None) => Exit::Failure(CrashReason::ExitCode(-1)),
+        (_, Some(signal)) => Exit::Failure(RunResult::Signal(signal)),
+        (Some(code), None) => Exit::Failure(RunResult::ExitCode(code)),
+        (None, None) => Exit::Failure(RunResult::ExitCode(-1)),
     };
     let ms = |time: libc::timeval| time.tv_sec as u64 * 1000 + time.tv_usec as u64 / 1000;
     let peak_memory = usage.ru_maxrss as u64;

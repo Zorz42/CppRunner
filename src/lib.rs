@@ -18,5 +18,5 @@ pub use check::Check;
 pub use compiler::COMPILER_ENV_VAR;
 pub use error::{Error, Result};
 pub use limits::Limits;
-pub use result::{CrashReason, RunResult, Verdict};
+pub use result::RunResult;
 pub use runner::{RunHandle, Runner};

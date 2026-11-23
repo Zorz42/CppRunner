@@ -1,5 +1,5 @@
 use crate::exec::{Exit, Usage, poll_interval};
-use crate::{CrashReason, Limits};
+use crate::{Limits, RunResult};
 use std::io;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
@@ -80,7 +80,7 @@ pub fn wait(program: &mut Child, limits: Limits, deadline: Instant) -> io::Resul
         if let Some(status) = program.try_wait()? {
             break match status.code() {
                 Some(0) => Exit::Success,
-                code => Exit::Failure(CrashReason::ExitCode(code.unwrap_or(-1))),
+                code => Exit::Failure(RunResult::ExitCode(code.unwrap_or(-1))),
             };
         }
         if cpu_time_ms(process) > cpu_limit_ms || Instant::now() >= deadline {

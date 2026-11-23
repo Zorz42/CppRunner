@@ -1,8 +1,8 @@
 use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
-use crate::check::{accepts, check_hash, verdict};
+use crate::check::{accepts, check_hash, checked};
 use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize, is_program_source};
 use crate::exec::run_executable;
-use crate::{Check, Error, Limits, Result, RunResult, Verdict};
+use crate::{Check, Error, Limits, Result, RunResult};
 use log::{debug, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -197,7 +197,7 @@ impl Runner {
         self.shared.work.notify_all();
     }
 
-    /// Whether results are looked up in and added to the result cache, which holds every verdict,
+    /// Whether results are looked up in and added to the result cache, which holds every checked run,
     /// time out, memory limit and crash, and successful runs whose output is at most 64 bytes. Of
     /// two results of the same run, it keeps the better: a pass over a failure, then the faster. On
     /// by default.
@@ -242,14 +242,14 @@ impl Runner {
         self.queue_run(source_code, input.into(), limits, false)
     }
 
-    /// As [`spawn`](Self::spawn), but the output is checked against `answer` and only the verdict
-    /// is kept. Verdicts are small, so they are always cached.
-    pub fn spawn_checked<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<Verdict>> {
+    /// As [`spawn`](Self::spawn), but the output is checked against `answer`, and only whether it
+    /// was accepted is kept. That is small, so checked runs are always cached.
+    pub fn spawn_checked<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
         self.queue_checked(source_code, input.into(), answer.into(), check, limits, true)
     }
 
-    /// As [`spawn_checked`](Self::spawn_checked), but never uses a cached verdict.
-    pub fn spawn_checked_fresh<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<Verdict>> {
+    /// As [`spawn_checked`](Self::spawn_checked), but never uses a cached result.
+    pub fn spawn_checked_fresh<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
         self.queue_checked(source_code, input.into(), answer.into(), check, limits, false)
     }
 
@@ -290,7 +290,7 @@ impl Runner {
         })
     }
 
-    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits, use_cached: bool) -> Result<RunHandle<Verdict>> {
+    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits, use_cached: bool) -> Result<RunHandle<RunResult<bool>>> {
         let (hash, executable) = self.executable(source_code)?;
         let checker = self.checker(check)?;
         let key = self.caching().then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map(|&(hash, _)| hash), &answer), limits));
@@ -301,11 +301,11 @@ impl Runner {
         self.queue(move |cache| {
             let checker = checker.as_ref().map(|(_, checker)| &**checker);
             let result = run_executable(&executable, &[], &input, limits)?;
-            let verdict = verdict(result, |output| accepts(checker, &build_folder, &input, &answer, output))?;
+            let checked = checked(result, |output| accepts(checker, &build_folder, &input, &answer, output))?;
             if let Some(key) = key {
-                cache.insert_verdict(key, verdict);
+                cache.insert_checked(key, checked);
             }
-            Ok(verdict)
+            Ok(checked)
         })
     }
 

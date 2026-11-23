@@ -1,5 +1,5 @@
 use crate::hash::stable_hash;
-use crate::{Limits, RunResult, Verdict};
+use crate::{Limits, RunResult};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -40,13 +40,13 @@ impl Key {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Entry {
     Run(RunResult),
-    Checked(Verdict),
+    Checked(RunResult<bool>),
 }
 
 impl Entry {
     const fn passed_in_ms(&self) -> Option<u64> {
         match self {
-            Self::Run(RunResult::Ok { time_ms, .. }) | Self::Checked(Verdict::Accepted { time_ms, .. }) => Some(*time_ms),
+            Self::Run(RunResult::Ok { time_ms, .. }) | Self::Checked(RunResult::Ok { time_ms, output: true, .. }) => Some(*time_ms),
             _ => None,
         }
     }
@@ -64,7 +64,7 @@ impl Entry {
 pub const fn is_cacheable(result: &RunResult) -> bool {
     match result {
         RunResult::Ok { output, .. } => output.len() <= MAX_CACHED_OUTPUT_BYTES,
-        RunResult::TimedOut | RunResult::MemoryLimitExceeded | RunResult::Crashed(_) => true,
+        RunResult::TimedOut | RunResult::MemoryLimitExceeded | RunResult::ExitCode(_) | RunResult::Signal(_) | RunResult::OutputLimitExceeded => true,
     }
 }
 
@@ -114,8 +114,8 @@ impl ResultCache {
         }
     }
 
-    pub fn insert_verdict(&self, key: Key, verdict: Verdict) {
-        self.insert(key, Entry::Checked(verdict));
+    pub fn insert_checked(&self, key: Key, result: RunResult<bool>) {
+        self.insert(key, Entry::Checked(result));
     }
 
     fn insert(&self, key: Key, entry: Entry) {

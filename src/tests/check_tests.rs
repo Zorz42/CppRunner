@@ -1,5 +1,5 @@
-use crate::check::{check_hash, tokens_match, verdict};
-use crate::{CrashReason, Error, RunResult, Verdict};
+use crate::check::{check_hash, checked, tokens_match};
+use crate::{Error, RunResult};
 
 #[test]
 fn tokens_ignore_whitespace_only() {
@@ -25,12 +25,27 @@ fn only_successful_runs_are_checked() {
         memory_kb: 4,
         output: "out".to_owned(),
     };
-    assert_eq!(verdict(ok.clone(), |output| Ok(output == "out")).unwrap(), Verdict::Accepted { time_ms: 3, memory_kb: 4 });
-    assert_eq!(verdict(ok.clone(), |_| Ok(false)).unwrap(), Verdict::WrongAnswer);
-    assert!(matches!(verdict(ok, |_| Err(Error::Cancelled)), Err(Error::Cancelled)));
+    assert_eq!(
+        checked(ok.clone(), |output| Ok(output == "out")).unwrap(),
+        RunResult::Ok {
+            time_ms: 3,
+            memory_kb: 4,
+            output: true
+        }
+    );
+    assert_eq!(
+        checked(ok.clone(), |_| Ok(false)).unwrap(),
+        RunResult::Ok {
+            time_ms: 3,
+            memory_kb: 4,
+            output: false
+        }
+    );
+    assert!(matches!(checked(ok, |_| Err(Error::Cancelled)), Err(Error::Cancelled)));
     let unchecked = |_: &str| -> crate::Result<bool> { unreachable!("a failed run was checked") };
-    assert_eq!(verdict(RunResult::TimedOut, unchecked).unwrap(), Verdict::TimedOut);
-    assert_eq!(verdict(RunResult::MemoryLimitExceeded, unchecked).unwrap(), Verdict::MemoryLimitExceeded);
-    let crash = CrashReason::Signal(11);
-    assert_eq!(verdict(RunResult::Crashed(crash), unchecked).unwrap(), Verdict::Crashed(crash));
+    assert_eq!(checked(RunResult::TimedOut, unchecked).unwrap(), RunResult::TimedOut);
+    assert_eq!(checked(RunResult::MemoryLimitExceeded, unchecked).unwrap(), RunResult::MemoryLimitExceeded);
+    assert_eq!(checked(RunResult::Signal(11), unchecked).unwrap(), RunResult::Signal(11));
+    assert_eq!(checked(RunResult::ExitCode(3), unchecked).unwrap(), RunResult::ExitCode(3));
+    assert_eq!(checked(RunResult::OutputLimitExceeded, unchecked).unwrap(), RunResult::OutputLimitExceeded);
 }

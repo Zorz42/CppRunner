@@ -1,5 +1,5 @@
 use crate::tests::common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_on, run_with, run_within};
-use crate::{CrashReason, Limits, RunResult};
+use crate::{Limits, RunResult};
 use std::time::{Duration, Instant};
 
 // MinGW's clock() measures wall time, which a loaded machine stretches.
@@ -98,34 +98,31 @@ fn deep_recursion_has_a_large_stack() {
 
 #[test]
 fn nonzero_exit_code_is_a_crash() {
-    assert_eq!(run("int main() { return 3; }", "", 1000), RunResult::Crashed(CrashReason::ExitCode(3)));
+    assert_eq!(run("int main() { return 3; }", "", 1000), RunResult::ExitCode(3));
 }
 
 #[test]
 fn exit_code_with_output_is_still_a_crash() {
     let source = "#include <cstdio>\n#include <cstdlib>\nint main() { std::printf(\"partial\"); std::exit(1); }";
-    assert_eq!(run(source, "", 1000), RunResult::Crashed(CrashReason::ExitCode(1)));
+    assert_eq!(run(source, "", 1000), RunResult::ExitCode(1));
 }
 
 #[test]
 fn segfault_is_a_crash() {
     let result = run("int main() { volatile int* p = nullptr; *p = 1; }", "", 1000);
-    assert!(matches!(result, RunResult::Crashed(CrashReason::Signal(_) | CrashReason::ExitCode(_))), "{result:?}");
+    assert!(matches!(result, RunResult::Signal(_) | RunResult::ExitCode(_)), "{result:?}");
 }
 
 #[test]
 #[cfg(unix)]
 fn abort_is_a_signal() {
-    assert_eq!(
-        run("#include <cstdlib>\nint main() { std::abort(); }", "", 1000),
-        RunResult::Crashed(CrashReason::Signal(libc::SIGABRT))
-    );
+    assert_eq!(run("#include <cstdlib>\nint main() { std::abort(); }", "", 1000), RunResult::Signal(libc::SIGABRT));
 }
 
 #[test]
 fn uncaught_exception_is_a_crash() {
     let result = run("#include <stdexcept>\nint main() { throw std::runtime_error(\"boom\"); }", "", 1000);
-    assert!(matches!(result, RunResult::Crashed(_)), "{result:?}");
+    assert!(matches!(result, RunResult::Signal(_) | RunResult::ExitCode(_)), "{result:?}");
 }
 
 #[test]
@@ -169,7 +166,7 @@ fn runaway_output_is_stopped() {
         int main() { std::string chunk(1 << 20, 'x'); for (;;) fwrite(chunk.data(), 1, chunk.size(), stdout); }";
     assert_eq!(
         run_within(Duration::from_secs(60), "a program that never stops printing", move || run(source, "", 5000)),
-        RunResult::Crashed(CrashReason::OutputLimitExceeded)
+        RunResult::OutputLimitExceeded
     );
 }
 
@@ -178,14 +175,14 @@ fn output_limit_is_exact() {
     let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
     let limits = Limits::new().with_output_bytes(100);
     assert_eq!(output(&run_with(source, "100", limits)).map(str::len), Some(100));
-    assert_eq!(run_with(source, "101", limits), RunResult::Crashed(CrashReason::OutputLimitExceeded));
+    assert_eq!(run_with(source, "101", limits), RunResult::OutputLimitExceeded);
 }
 
 #[test]
 fn output_limit_extremes() {
     let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
     assert_eq!(output(&run_with(source, "0", Limits::new().with_output_bytes(0))), Some(""));
-    assert_eq!(run_with(source, "1", Limits::new().with_output_bytes(0)), RunResult::Crashed(CrashReason::OutputLimitExceeded));
+    assert_eq!(run_with(source, "1", Limits::new().with_output_bytes(0)), RunResult::OutputLimitExceeded);
     assert_eq!(output(&run_with(source, "5", Limits::new().with_output_bytes(u64::MAX))), Some("xxxxx"));
 }
 
@@ -217,7 +214,7 @@ fn no_memory_limit_allows_large_allocations() {
 #[cfg(not(target_os = "macos"))]
 fn runaway_memory_is_stopped() {
     let result = run_with(ALLOCATE, "8192", Limits::new().with_time_ms(5000).with_memory_mb(64));
-    assert!(matches!(result, RunResult::MemoryLimitExceeded | RunResult::Crashed(_)), "got {result:?}");
+    assert!(matches!(result, RunResult::MemoryLimitExceeded | RunResult::ExitCode(_) | RunResult::Signal(_)), "got {result:?}");
 }
 
 #[test]

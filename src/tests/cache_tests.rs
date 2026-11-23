@@ -1,5 +1,5 @@
 use crate::cache::{Entry, Key, MAX_CACHED_OUTPUT_BYTES, ResultCache, is_cacheable};
-use crate::{CrashReason, Limits, RunResult, Verdict};
+use crate::{Limits, RunResult};
 use tempfile::TempDir;
 
 fn ok(output: &str) -> RunResult {
@@ -17,9 +17,9 @@ fn every_kind() -> Vec<RunResult> {
         ok("multi word\nline \u{fffd} end"),
         RunResult::TimedOut,
         RunResult::MemoryLimitExceeded,
-        RunResult::Crashed(CrashReason::ExitCode(-3)),
-        RunResult::Crashed(CrashReason::Signal(11)),
-        RunResult::Crashed(CrashReason::OutputLimitExceeded),
+        RunResult::ExitCode(-3),
+        RunResult::Signal(11),
+        RunResult::OutputLimitExceeded,
     ]
 }
 
@@ -110,7 +110,7 @@ fn the_better_result_is_kept() {
         memory_kb: 1,
         output: "1".to_owned(),
     };
-    for result in [RunResult::TimedOut, ok("1"), RunResult::Crashed(CrashReason::ExitCode(1)), fast.clone(), ok("1")] {
+    for result in [RunResult::TimedOut, ok("1"), RunResult::ExitCode(1), fast.clone(), ok("1")] {
         cache.insert_run(key, &result);
     }
     assert_eq!(cache.get(&key), Some(Entry::Run(fast.clone())));
@@ -128,29 +128,37 @@ fn a_failure_does_not_replace_another() {
     assert_eq!(cache.get(&key), Some(Entry::Run(RunResult::TimedOut)));
 }
 
-fn every_verdict() -> Vec<Verdict> {
+fn every_checked_result() -> Vec<RunResult<bool>> {
     vec![
-        Verdict::Accepted { time_ms: 7, memory_kb: 890 },
-        Verdict::WrongAnswer,
-        Verdict::TimedOut,
-        Verdict::MemoryLimitExceeded,
-        Verdict::Crashed(CrashReason::ExitCode(3)),
-        Verdict::Crashed(CrashReason::Signal(6)),
-        Verdict::Crashed(CrashReason::OutputLimitExceeded),
+        RunResult::Ok {
+            time_ms: 7,
+            memory_kb: 890,
+            output: true,
+        },
+        RunResult::Ok {
+            time_ms: 7,
+            memory_kb: 890,
+            output: false,
+        },
+        RunResult::TimedOut,
+        RunResult::MemoryLimitExceeded,
+        RunResult::ExitCode(3),
+        RunResult::Signal(6),
+        RunResult::OutputLimitExceeded,
     ]
 }
 
 #[test]
-fn every_verdict_survives_the_file() {
+fn every_checked_result_survives_the_file() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("results.cache");
     let writer = ResultCache::new(path.clone());
-    for (i, &verdict) in every_verdict().iter().enumerate() {
-        writer.insert_verdict(Key::checked(i as u64, "in", 42, Limits::new()), verdict);
+    for (i, &result) in every_checked_result().iter().enumerate() {
+        writer.insert_checked(Key::checked(i as u64, "in", 42, Limits::new()), result);
     }
     let reader = ResultCache::new(path);
-    for (i, &verdict) in every_verdict().iter().enumerate() {
-        assert_eq!(reader.get(&Key::checked(i as u64, "in", 42, Limits::new())), Some(Entry::Checked(verdict)));
+    for (i, &result) in every_checked_result().iter().enumerate() {
+        assert_eq!(reader.get(&Key::checked(i as u64, "in", 42, Limits::new())), Some(Entry::Checked(result)));
         assert_eq!(reader.get(&Key::new(i as u64, "in", Limits::new())), None);
     }
 }
@@ -161,4 +169,16 @@ fn checked_keys_differ_by_check() {
     assert_eq!(key, Key::checked(1, "input", 2, Limits::new()));
     assert_ne!(key, Key::checked(1, "input", 3, Limits::new()));
     assert_ne!(key, Key::new(1, "input", Limits::new()));
+}
+
+#[test]
+fn a_rejected_run_does_not_replace_an_accepted_one() {
+    let dir = TempDir::new().unwrap();
+    let key = Key::checked(1, "in", 2, Limits::new());
+    let cache = ResultCache::new(dir.path().join("results.cache"));
+    let run = |time_ms, output| RunResult::Ok { time_ms, memory_kb: 1, output };
+    cache.insert_checked(key, run(5, false));
+    cache.insert_checked(key, run(9, true));
+    cache.insert_checked(key, run(1, false));
+    assert_eq!(cache.get(&key), Some(Entry::Checked(run(9, true))));
 }

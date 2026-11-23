@@ -1,5 +1,5 @@
 use crate::tests::common::{ECHO, logging_echo, runner, runs_logged};
-use crate::{Check, CrashReason, Error, Limits, Runner, Verdict};
+use crate::{Check, Error, Limits, RunResult, Runner};
 
 /// Accepts any output that is a number at least the input, whatever the answer.
 const AT_LEAST_INPUT: &str = "#include <fstream>
@@ -9,12 +9,16 @@ const FIRST_TOKEN: &str = "#include <fstream>\n#include <string>
     int main(int argc, char** argv) { std::ifstream out(argv[2]), ans(argv[3]); std::string got, want; if (!(ans >> want)) return 3; out >> got; return got == want ? 0 : 2; }";
 const PRINT_LINES: &str = "#include <iostream>\nint main() { int n; std::cin >> n; for (int i = 0; i < n; i++) std::cout << i << '\\n'; }";
 
-fn checked(runner: &Runner, source: &str, input: &str, answer: &str, check: &Check) -> crate::Result<Verdict> {
+fn checked(runner: &Runner, source: &str, input: &str, answer: &str, check: &Check) -> crate::Result<RunResult<bool>> {
     runner.spawn_checked(source, input, answer, check, Limits::default())?.wait()
 }
 
-fn accepted(verdict: &Verdict) -> bool {
-    matches!(verdict, Verdict::Accepted { .. })
+fn accepted(result: &RunResult<bool>) -> bool {
+    matches!(result, RunResult::Ok { output: true, .. })
+}
+
+fn rejected(result: &RunResult<bool>) -> bool {
+    matches!(result, RunResult::Ok { output: false, .. })
 }
 
 #[test]
@@ -22,9 +26,9 @@ fn tokens_are_compared() {
     let (_dir, runner) = runner();
     assert!(accepted(&checked(&runner, ECHO, "42", "42", &Check::Tokens).unwrap()));
     assert!(accepted(&checked(&runner, ECHO, "42", "  42\n\n", &Check::Tokens).unwrap()));
-    assert_eq!(checked(&runner, ECHO, "42", "43", &Check::Tokens).unwrap(), Verdict::WrongAnswer);
-    assert_eq!(checked(&runner, ECHO, "42", "42 0", &Check::Tokens).unwrap(), Verdict::WrongAnswer);
-    assert_eq!(checked(&runner, ECHO, "42", "4 2", &Check::Tokens).unwrap(), Verdict::WrongAnswer);
+    assert!(rejected(&checked(&runner, ECHO, "42", "43", &Check::Tokens).unwrap()));
+    assert!(rejected(&checked(&runner, ECHO, "42", "42 0", &Check::Tokens).unwrap()));
+    assert!(rejected(&checked(&runner, ECHO, "42", "4 2", &Check::Tokens).unwrap()));
 }
 
 #[test]
@@ -35,37 +39,33 @@ fn the_default_check_compares_tokens() {
 #[test]
 fn accepted_runs_are_measured() {
     let (_dir, runner) = runner();
-    let verdict = checked(&runner, ECHO, "1", "1", &Check::Tokens).unwrap();
-    assert!(matches!(verdict, Verdict::Accepted { memory_kb, .. } if memory_kb > 0), "{verdict:?}");
+    let result = checked(&runner, ECHO, "1", "1", &Check::Tokens).unwrap();
+    assert!(matches!(result, RunResult::Ok { output: true, memory_kb, .. } if memory_kb > 0), "{result:?}");
+    let result = checked(&runner, ECHO, "1", "2", &Check::Tokens).unwrap();
+    assert!(matches!(result, RunResult::Ok { output: false, memory_kb, .. } if memory_kb > 0), "{result:?}");
 }
 
 #[test]
-fn failed_runs_keep_their_verdict() {
+fn failed_runs_keep_their_result() {
     let (_dir, runner) = runner();
     let limits = Limits::new().with_time_ms(100);
     let hang = runner.spawn_checked("int main() { while (true) {} }", "", "", &Check::Tokens, limits).unwrap();
-    assert_eq!(hang.wait().unwrap(), Verdict::TimedOut);
-    assert_eq!(
-        checked(&runner, "int main() { return 3; }", "", "", &Check::Tokens).unwrap(),
-        Verdict::Crashed(CrashReason::ExitCode(3))
-    );
+    assert_eq!(hang.wait().unwrap(), RunResult::TimedOut);
+    assert_eq!(checked(&runner, "int main() { return 3; }", "", "", &Check::Tokens).unwrap(), RunResult::ExitCode(3));
     let limits = Limits::new().with_output_bytes(10);
     let flood = runner.spawn_checked(PRINT_LINES, "1000", "", &Check::Tokens, limits).unwrap();
-    assert_eq!(flood.wait().unwrap(), Verdict::Crashed(CrashReason::OutputLimitExceeded));
+    assert_eq!(flood.wait().unwrap(), RunResult::OutputLimitExceeded);
 }
 
 #[test]
 fn a_failed_run_is_not_checked() {
     let (_dir, runner) = runner();
     let failing_checker = Check::Program("int main() { return 3; }".to_owned());
-    assert_eq!(
-        checked(&runner, "int main() { return 1; }", "", "", &failing_checker).unwrap(),
-        Verdict::Crashed(CrashReason::ExitCode(1))
-    );
+    assert_eq!(checked(&runner, "int main() { return 1; }", "", "", &failing_checker).unwrap(), RunResult::ExitCode(1));
 }
 
 #[test]
-fn verdicts_of_long_outputs_are_cached() {
+fn checks_of_long_outputs_are_cached() {
     let (dir, runner) = runner();
     let answer = (0..1000).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
     let first = runner.spawn_checked(PRINT_LINES, "1000", answer.as_str(), &Check::Tokens, Limits::default()).unwrap();
@@ -98,7 +98,7 @@ fn the_cache_key_holds_the_answer_and_the_checker() {
     let program = logging_echo(&log);
     let first_token = Check::Program(FIRST_TOKEN.to_owned());
     assert!(accepted(&checked(&runner, &program, "a", "a", &Check::Tokens).unwrap()));
-    assert_eq!(checked(&runner, &program, "a", "b", &Check::Tokens).unwrap(), Verdict::WrongAnswer);
+    assert!(rejected(&checked(&runner, &program, "a", "b", &Check::Tokens).unwrap()));
     assert!(accepted(&checked(&runner, &program, "a", "a", &first_token).unwrap()));
     assert!(accepted(&checked(&runner, &program, "a", "a", &Check::Tokens).unwrap()));
     assert!(accepted(&checked(&runner, &program, "a", "a", &first_token).unwrap()));
@@ -129,7 +129,7 @@ fn checked_runs_are_not_cached_when_caching_is_off() {
 }
 
 #[test]
-fn verdicts_outlive_the_runner() {
+fn checked_results_outlive_the_runner() {
     let (dir, runner) = runner();
     let log = dir.path().join("log");
     let program = logging_echo(&log);
@@ -138,7 +138,7 @@ fn verdicts_outlive_the_runner() {
     let runner = Runner::new(dir.path()).unwrap();
     let again = runner.spawn_checked(&program, "a", "b", &Check::Tokens, Limits::default()).unwrap();
     assert!(again.is_cached());
-    assert_eq!(again.wait().unwrap(), Verdict::WrongAnswer);
+    assert!(rejected(&again.wait().unwrap()));
     assert_eq!(runs_logged(&log), ["a"]);
 }
 
@@ -149,11 +149,11 @@ fn a_checker_reads_the_input_output_and_answer() {
     let print_five = "#include <iostream>\nint main() { std::cout << 5; }";
     assert!(accepted(&checked(&runner, print_five, "3", "unused", &at_least_input).unwrap()));
     assert!(accepted(&checked(&runner, print_five, "5", "unused", &at_least_input).unwrap()));
-    assert_eq!(checked(&runner, print_five, "6", "unused", &at_least_input).unwrap(), Verdict::WrongAnswer);
+    assert!(rejected(&checked(&runner, print_five, "6", "unused", &at_least_input).unwrap()));
 
     let first_token = Check::Program(FIRST_TOKEN.to_owned());
     assert!(accepted(&checked(&runner, print_five, "", "5 and more", &first_token).unwrap()));
-    assert_eq!(checked(&runner, print_five, "", "4", &first_token).unwrap(), Verdict::WrongAnswer);
+    assert!(rejected(&checked(&runner, print_five, "", "4", &first_token).unwrap()));
 }
 
 #[test]
@@ -218,6 +218,6 @@ fn checked_runs_can_be_cancelled() {
     let busy = runner.spawn_checked("int main() { while (true) {} }", "", "", &Check::Tokens, limits).unwrap();
     let queued = runner.spawn_checked(ECHO, "1", "1", &Check::Tokens, Limits::default()).unwrap();
     queued.cancel();
-    assert_eq!(busy.wait().unwrap(), Verdict::TimedOut);
+    assert_eq!(busy.wait().unwrap(), RunResult::TimedOut);
     assert!(matches!(queued.wait(), Err(Error::Cancelled)));
 }
