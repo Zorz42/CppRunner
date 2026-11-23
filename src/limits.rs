@@ -61,7 +61,7 @@ impl Limits {
     /// Sets [`Limits::memory_kb`] in megabytes.
     #[must_use]
     pub const fn with_memory_mb(self, memory_mb: u64) -> Self {
-        self.with_memory_kb(Some(memory_mb.saturating_mul(1024)))
+        self.with_memory_kb(Some(memory_mb * 1024))
     }
 
     /// Sets [`Limits::output_bytes`].
@@ -81,10 +81,10 @@ impl Limits {
 
     /// Only stops runaway programs; the measured peak is what is compared with the limit.
     pub(crate) fn memory_cap_bytes(self) -> Option<u64> {
-        self.memory_kb.map(|memory_kb| memory_kb.saturating_mul(2048).saturating_add(1 << 30))
+        self.memory_kb.map(|memory_kb| memory_kb * 2048 + (1 << 30))
     }
 
     pub(crate) const fn wall_clock(self) -> Duration {
-        Duration::from_millis(self.effective_time_ms().saturating_mul(2).saturating_add(2000))
+        Duration::from_millis(self.effective_time_ms() * 2 + 2000)
     }
 }

@@ -20,13 +20,11 @@ fn zero_time_counts_as_one_millisecond() {
 fn memory_cap_is_far_above_the_limit() {
     assert_eq!(Limits::new().memory_cap_bytes(), None);
     assert_eq!(Limits::new().with_memory_mb(64).memory_cap_bytes(), Some((128 << 20) + (1 << 30)));
-    assert_eq!(Limits::new().with_memory_kb(Some(u64::MAX)).memory_cap_bytes(), Some(u64::MAX));
 }
 
 #[test]
 fn wall_clock_is_generous() {
     assert_eq!(Limits::new().with_time_ms(1000).wall_clock(), Duration::from_secs(4));
-    assert_eq!(Limits::new().with_time_ms(u64::MAX).wall_clock(), Duration::from_millis(u64::MAX));
 }
 
 #[test]
@@ -51,9 +49,4 @@ fn builders_set_fields() {
     );
     assert_eq!(limits.with_memory_kb(None).memory_kb, None);
     assert_eq!(limits.with_memory_kb(Some(3)).memory_kb, Some(3));
-}
-
-#[test]
-fn memory_mb_saturates() {
-    assert_eq!(Limits::new().with_memory_mb(u64::MAX).memory_kb, Some(u64::MAX));
 }

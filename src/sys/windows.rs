@@ -37,10 +37,10 @@ impl Job {
 
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_TIME;
-        info.BasicLimitInformation.PerProcessUserTimeLimit = (limits.cpu_seconds().saturating_add(5).saturating_mul(10_000_000)).min(i64::MAX as u64) as i64;
+        info.BasicLimitInformation.PerProcessUserTimeLimit = ((limits.cpu_seconds() + 5) * 10_000_000) as i64;
         if let Some(cap) = limits.memory_cap_bytes() {
             info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
-            info.ProcessMemoryLimit = usize::try_from(cap).unwrap_or(usize::MAX);
+            info.ProcessMemoryLimit = cap as usize;
         }
         unsafe {
             SetInformationJobObject(job.0, JobObjectExtendedLimitInformation, (&raw const info).cast(), size_of_val(&info) as u32);
@@ -74,7 +74,7 @@ fn cpu_time_ms(process: HANDLE) -> u64 {
 pub fn wait(program: &mut Child, limits: Limits, deadline: Instant) -> io::Result<Usage> {
     let process = program.as_raw_handle();
     let job = Job::new(process, limits);
-    let cpu_limit_ms = limits.cpu_seconds().saturating_mul(1000);
+    let cpu_limit_ms = limits.cpu_seconds() * 1000;
     let start = Instant::now();
     let exit = loop {
         if let Some(status) = program.try_wait()? {

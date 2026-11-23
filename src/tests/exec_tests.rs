@@ -14,7 +14,7 @@ fn read_output_stops_past_the_limit() {
     assert_eq!(read_output(&b"123456"[..], 5).unwrap(), None);
     assert_eq!(read_output(&b""[..], 0).unwrap(), Some(Vec::new()));
     assert_eq!(read_output(&b"x"[..], 0).unwrap(), None);
-    assert_eq!(read_output(&b"x"[..], u64::MAX).unwrap(), Some(b"x".to_vec()));
+    assert_eq!(read_output(&b"x"[..], 1 << 40).unwrap(), Some(b"x".to_vec()));
 }
 
 #[test]

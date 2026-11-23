@@ -27,7 +27,7 @@ pub fn poll_interval(elapsed: Duration) -> Duration {
 
 pub fn read_output<R: Read>(stdout: R, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut output = Vec::new();
-    stdout.take(max_bytes.saturating_add(1)).read_to_end(&mut output)?;
+    stdout.take(max_bytes + 1).read_to_end(&mut output)?;
     Ok((output.len() as u64 <= max_bytes).then_some(output))
 }
 

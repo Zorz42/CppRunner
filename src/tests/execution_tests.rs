@@ -183,7 +183,7 @@ fn output_limit_extremes() {
     let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
     assert_eq!(output(&run_with(source, "0", Limits::new().with_output_bytes(0))), Some(""));
     assert_eq!(run_with(source, "1", Limits::new().with_output_bytes(0)), RunResult::OutputLimitExceeded);
-    assert_eq!(output(&run_with(source, "5", Limits::new().with_output_bytes(u64::MAX))), Some("xxxxx"));
+    assert_eq!(output(&run_with(source, "5", Limits::new().with_output_bytes(1 << 40))), Some("xxxxx"));
 }
 
 #[test]

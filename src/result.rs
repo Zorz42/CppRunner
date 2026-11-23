@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// How a run ended. `O` is what a successful run gives: its output, or for a
 /// [checked](crate::Runner::spawn_checked) run whether the output was accepted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum RunResult<O = String> {
+pub enum RunResult<T = String> {
     /// Exited with code zero within all limits.
     Ok {
         /// CPU time used, in milliseconds.
@@ -11,7 +11,7 @@ pub enum RunResult<O = String> {
         /// Peak memory used, in kilobytes.
         memory_kb: u64,
         /// Everything written to stdout, with invalid UTF-8 replaced; or whether it was accepted.
-        output: O,
+        output: T,
     },
     /// Used more CPU time than allowed, or blocked for far too long.
     TimedOut,

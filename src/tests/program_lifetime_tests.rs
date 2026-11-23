@@ -54,7 +54,7 @@ fn programs_unused_for_a_week_are_removed_when_the_runner_is_dropped() {
 fn programs_unused_for_under_a_week_stay() {
     let dir = TempDir::new().unwrap();
     let [source] = compiled_and_aged(&dir, &[HELLO_WORLD], &[]).try_into().unwrap();
-    age(&source, UNUSED_PROGRAM_LIFETIME.checked_sub(Duration::from_secs(3600)).unwrap());
+    age(&source, UNUSED_PROGRAM_LIFETIME - Duration::from_secs(3600));
     drop(Runner::new(dir.path()).unwrap());
     assert!(exists(&source));
 }
