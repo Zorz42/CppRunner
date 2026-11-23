@@ -6,6 +6,7 @@ mod check;
 mod compiler;
 mod error;
 mod exec;
+mod hash;
 mod limits;
 mod result;
 mod runner;

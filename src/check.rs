@@ -1,7 +1,7 @@
 use crate::compiler::SCRATCH_PREFIX;
 use crate::exec::run_executable;
+use crate::hash::stable_hash;
 use crate::{CrashReason, Error, Limits, Result, RunResult, Verdict};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 /// The CPU time a checker program may use on one output.
@@ -25,10 +25,8 @@ pub fn tokens_match(output: &str, answer: &str) -> bool {
 
 /// Identifies the check of an output against `answer`, for the result cache.
 pub fn check_hash(checker: Option<u64>, answer: &str) -> u64 {
-    let mut state = DefaultHasher::new();
-    checker.hash(&mut state);
-    answer.hash(&mut state);
-    state.finish()
+    let checker = checker.map(u64::to_le_bytes);
+    stable_hash(&[checker.as_ref().map_or(&[][..], |checker| &checker[..]), answer.as_bytes()])
 }
 
 /// Whether `output` is accepted: by token comparison without a checker executable.

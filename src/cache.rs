@@ -1,9 +1,9 @@
+use crate::hash::stable_hash;
 use crate::{CrashReason, Limits, RunResult, Verdict};
 use log::warn;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -26,11 +26,9 @@ pub struct Key {
 
 impl Key {
     pub fn new(program: u64, input: &str, limits: Limits) -> Self {
-        let mut state = DefaultHasher::new();
-        input.hash(&mut state);
         Self {
             program,
-            input: state.finish(),
+            input: stable_hash(&[input.as_bytes()]),
             check: None,
             limits,
         }

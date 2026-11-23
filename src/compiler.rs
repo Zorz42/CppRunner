@@ -1,7 +1,7 @@
+use crate::hash::stable_hash;
 use crate::{Error, Result};
 use log::{debug, trace};
 use std::ffi::OsStr;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -147,11 +147,7 @@ impl Compiler {
     }
 
     pub fn program_hash(&self, source_code: &str) -> u64 {
-        let mut state = DefaultHasher::new();
-        source_code.hash(&mut state);
-        self.path.hash(&mut state);
-        env!("CARGO_PKG_VERSION").hash(&mut state);
-        state.finish()
+        stable_hash(&[source_code.as_bytes(), self.path.as_os_str().as_encoded_bytes(), env!("CARGO_PKG_VERSION").as_bytes()])
     }
 
     /// `build_folder` must be canonical. Compiles in a private scratch folder and renames the results into place, so that threads and
