@@ -8,9 +8,13 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const fn assert_send_sync<T: Send + Sync>() {}
-const _: () = assert_send_sync::<CppRunner>();
-const _: () = assert_send_sync::<Compiler>();
-const _: () = assert_send_sync::<Error>();
+
+#[test]
+fn types_are_send_and_sync() {
+    assert_send_sync::<CppRunner>();
+    assert_send_sync::<Compiler>();
+    assert_send_sync::<Error>();
+}
 
 #[test]
 fn run_program() {
