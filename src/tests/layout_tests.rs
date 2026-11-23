@@ -21,7 +21,7 @@ fn tests_live_only_in_src_tests() {
     let mut files = Vec::new();
     rust_files(&root.join("src"), &mut files);
     for file in files.iter().filter(|file| !file.starts_with(&tests)) {
-        let text = std::fs::read_to_string(file).unwrap().replace("#[cfg(test)]\nmod tests;", "");
+        let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n").replace("#[cfg(test)]\nmod tests;", "");
         assert!(!text.contains("#[test]") && !text.contains("cfg(test)"), "{} has tests; they belong in src/tests", file.display());
     }
 }
