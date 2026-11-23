@@ -1,7 +1,5 @@
-mod common;
-
-use common::{ECHO, logging_echo, runner, runs_logged};
-use cpprunner::{Check, CrashReason, Error, Limits, Runner, Verdict};
+use crate::tests::common::{ECHO, logging_echo, runner, runs_logged};
+use crate::{Check, CrashReason, Error, Limits, Runner, Verdict};
 
 /// Accepts any output that is a number at least the input, whatever the answer.
 const AT_LEAST_INPUT: &str = "#include <fstream>
@@ -11,7 +9,7 @@ const FIRST_TOKEN: &str = "#include <fstream>\n#include <string>
     int main(int argc, char** argv) { std::ifstream out(argv[2]), ans(argv[3]); std::string got, want; if (!(ans >> want)) return 3; out >> got; return got == want ? 0 : 2; }";
 const PRINT_LINES: &str = "#include <iostream>\nint main() { int n; std::cin >> n; for (int i = 0; i < n; i++) std::cout << i << '\\n'; }";
 
-fn checked(runner: &Runner, source: &str, input: &str, answer: &str, check: &Check) -> cpprunner::Result<Verdict> {
+fn checked(runner: &Runner, source: &str, input: &str, answer: &str, check: &Check) -> crate::Result<Verdict> {
     runner.spawn_checked(source, input, answer, check, Limits::default())?.wait()
 }
 
@@ -193,7 +191,7 @@ fn a_checker_leaves_no_files_behind() {
     let (dir, runner) = runner();
     let first_token = Check::Program(FIRST_TOKEN.to_owned());
     checked(&runner, ECHO, "1", "1", &first_token).unwrap();
-    let scratch: Vec<_> = common::files_in(dir.path()).into_iter().filter(|path| path.is_dir()).collect();
+    let scratch: Vec<_> = crate::tests::common::files_in(dir.path()).into_iter().filter(|path| path.is_dir()).collect();
     assert_eq!(scratch, Vec::<std::path::PathBuf>::new());
 }
 

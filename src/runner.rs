@@ -1,22 +1,39 @@
 use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
 use crate::check::{accepts, check_hash, verdict};
-use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize};
+use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize, is_program_source};
 use crate::exec::run_executable;
 use crate::{Check, Error, Limits, Result, RunResult, Verdict};
-use log::warn;
+use log::{debug, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime};
 
 /// The default number of runs at once is the number of cores, but no more than this, so that
 /// contention between parallel runs does not change verdicts.
 pub const MAX_DEFAULT_WORKERS: usize = 4;
 
+/// A compiled program not used for this long is removed when a runner is dropped.
+pub const UNUSED_PROGRAM_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A program's last use is the modification time of its source, as its executable cannot be
+/// written to while it runs on Windows.
+fn mark_used(source: &Path) {
+    let marked = std::fs::File::options().write(true).open(source).and_then(|file| file.set_modified(SystemTime::now()));
+    if let Err(err) = marked {
+        warn!("Could not mark {} as used: {err}", source.display());
+    }
+}
+
+fn unused_for(path: &Path) -> Option<Duration> {
+    SystemTime::now().duration_since(path.metadata().ok()?.modified().ok()?).ok()
 }
 
 struct Task {
@@ -109,6 +126,7 @@ impl<T> Drop for RunHandle<T> {
 ///
 /// Programs are named by their source and compiled the first time they are used. Compiled programs
 /// and small results stay in the build folder for later runners, which may be in other processes.
+/// Dropping a runner, once its runs have ended, removes the programs no runner used for a week.
 /// Every method takes `&self`, so a runner can be shared between threads.
 ///
 /// ```
@@ -140,7 +158,7 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Uses `build_folder`, created if missing, and the compiler [`COMPILER_ENV_VAR`](crate::COMPILER_ENV_VAR) names.
+    /// Uses `build_folder`, created if missing, and the compiler `GCC_PATH` names.
     pub fn new(build_folder: &Path) -> Result<Self> {
         std::fs::create_dir_all(build_folder).map_err(Error::io(build_folder))?;
         let build_folder = canonicalize(build_folder)?;
@@ -180,9 +198,9 @@ impl Runner {
     }
 
     /// Whether results are looked up in and added to the result cache, which holds every verdict,
-    /// time out, memory limit and crash, and successful runs whose output is at most
-    /// [`MAX_CACHED_OUTPUT_BYTES`](crate::MAX_CACHED_OUTPUT_BYTES). Of two results of the same run,
-    /// it keeps the better: a pass over a failure, then the faster. On by default.
+    /// time out, memory limit and crash, and successful runs whose output is at most 64 bytes. Of
+    /// two results of the same run, it keeps the better: a pass over a failure, then the faster. On
+    /// by default.
     pub fn set_result_cache(&self, enabled: bool) {
         self.caching.store(enabled, Ordering::Relaxed);
     }
@@ -205,6 +223,7 @@ impl Runner {
             return Ok((hash, executable.clone()));
         }
         let compiled = self.compiler.compile_cached(&self.build_folder, source_code)?;
+        mark_used(&compiled.source);
         self.keep(compiled.source);
         self.keep(compiled.executable.clone());
         let executable: Arc<Path> = compiled.executable.into();
@@ -321,6 +340,26 @@ impl Runner {
         Ok(RunHandle { receiver, cancelled, cached: false })
     }
 
+    /// The executable goes first, so that a program still running elsewhere keeps its source and is
+    /// tried again next time.
+    fn remove_unused_programs(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.build_folder) else { return };
+        let kept = lock(&self.kept).clone();
+        for source in entries.filter_map(|entry| Some(entry.ok()?.path())) {
+            if !is_program_source(&source) || kept.contains(&source) || unused_for(&source).is_none_or(|unused| unused < UNUSED_PROGRAM_LIFETIME) {
+                continue;
+            }
+            debug!("Removing {}, unused for over a week", source.display());
+            let removed = Compiler::executable_path(&source).and_then(|executable| match std::fs::remove_file(&executable) {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(Error::io(&executable)(err)),
+                _ => std::fs::remove_file(&source).map_err(Error::io(&source)),
+            });
+            if let Err(err) = removed {
+                warn!("Could not remove an unused program: {err}");
+            }
+        }
+    }
+
     /// Keeps `file` when [`clean_build_folder`](Self::clean_build_folder) runs.
     pub fn keep(&self, file: PathBuf) {
         lock(&self.kept).insert(file);
@@ -359,5 +398,6 @@ impl Drop for Runner {
         for thread in lock(&self.threads).drain(..) {
             let _ = thread.join();
         }
+        self.remove_unused_programs();
     }
 }

@@ -9,11 +9,6 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 pub const CACHE_FILE: &str = "results.cache";
-/// Successful runs are cached only if their output is at most this long, such as a single number or
-/// `YES`/`NO`.
-///
-/// Caching long outputs would make the cache too large to be worth it. Checked runs are always
-/// cached, as only their verdict is kept.
 pub const MAX_CACHED_OUTPUT_BYTES: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]

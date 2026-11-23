@@ -74,6 +74,14 @@ pub fn install(scratch: &Path, destination: &Path) -> Result<()> {
     })
 }
 
+/// Whether `path` is the source of a program [`Compiler::compile_cached`] compiled.
+pub fn is_program_source(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    name.strip_prefix('p')
+        .and_then(|name| name.strip_suffix(".cpp"))
+        .is_some_and(|hash| !hash.is_empty() && hash.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 pub struct CompiledProgram {
     pub source: PathBuf,
     pub executable: PathBuf,

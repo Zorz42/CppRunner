@@ -1,6 +1,13 @@
 mod cache_tests;
 mod check_tests;
+mod checked_run_tests;
+mod common;
 mod compiler_tests;
+mod env_var_tests;
 mod exec_tests;
+mod execution_tests;
 mod hash_tests;
+mod layout_tests;
 mod limits_tests;
+mod program_lifetime_tests;
+mod runner_tests;

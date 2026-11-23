@@ -34,7 +34,7 @@ impl Default for Limits {
 }
 
 impl Limits {
-    /// [`DEFAULT_TIME_MS`], no memory limit and [`DEFAULT_OUTPUT_BYTES`].
+    /// One second, no memory limit and 256 MiB of output.
     #[must_use]
     pub const fn new() -> Self {
         Self {

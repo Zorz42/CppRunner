@@ -19,7 +19,7 @@ pub enum Error {
     #[error(
         "C++ compiler is not found. Make sure to install it first. If it is already installed, \
          specify the path to the compiler with the {} environment variable.",
-        crate::COMPILER_ENV_VAR
+        crate::compiler::COMPILER_ENV_VAR
     )]
     CompilerNotFound,
 

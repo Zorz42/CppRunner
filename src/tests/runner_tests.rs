@@ -1,7 +1,7 @@
-mod common;
-
-use common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, run_on, runner, runs_logged};
-use cpprunner::{Error, Limits, MAX_CACHED_OUTPUT_BYTES, MAX_DEFAULT_WORKERS, RunHandle, RunResult, Runner};
+use crate::cache::MAX_CACHED_OUTPUT_BYTES;
+use crate::runner::MAX_DEFAULT_WORKERS;
+use crate::tests::common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, run_on, runner, runs_logged};
+use crate::{Error, Limits, RunHandle, RunResult, Runner};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 

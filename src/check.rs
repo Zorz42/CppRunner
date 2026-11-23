@@ -15,7 +15,7 @@ pub enum Check {
     Tokens,
     /// The source of a C++ checker, run as `checker input output answer` on three files. It accepts
     /// by exiting with 0 and rejects with 1 or 2, as testlib checkers do; any other ending is an
-    /// [`Error::CheckerFailed`]. It may use [`CHECKER_TIME_MS`].
+    /// [`Error::CheckerFailed`]. It may use ten seconds of CPU time.
     Program(String),
 }
 

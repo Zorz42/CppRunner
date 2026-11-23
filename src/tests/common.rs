@@ -1,6 +1,4 @@
-#![allow(dead_code)]
-
-use cpprunner::{Limits, RunResult, Runner};
+use crate::{Limits, RunResult, Runner};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -24,7 +22,7 @@ pub fn runner() -> (TempDir, Runner) {
     (dir, runner)
 }
 
-pub fn run_on(runner: &Runner, source: &str, input: &str, limits: Limits) -> cpprunner::Result<RunResult> {
+pub fn run_on(runner: &Runner, source: &str, input: &str, limits: Limits) -> crate::Result<RunResult> {
     runner.spawn(source, input, limits)?.wait()
 }
 

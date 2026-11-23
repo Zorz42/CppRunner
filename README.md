@@ -20,7 +20,8 @@ match runner.spawn(sum, "1 2", limits)?.wait()? {
 
 - Programs are identified by their source and compiled on first use with `-std=c++17 -O2`, using
   `g++`, `c++`, `clang++` or MinGW, or the compiler in `GCC_PATH`. Compiled programs stay in the
-  build folder, which can be shared between threads and processes.
+  build folder, which can be shared between threads and processes, until a runner is dropped after
+  they went unused for a week.
 - `spawn` queues a run and returns a handle to `wait` for or `cancel`; dropping the handle cancels
   it. Runs start in order and up to `set_workers` of them (by default the number of cores, at
   most 4) run at once.
