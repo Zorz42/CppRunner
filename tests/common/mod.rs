@@ -24,13 +24,17 @@ pub fn runner() -> (TempDir, Runner) {
     (dir, runner)
 }
 
+pub fn run_on(runner: &Runner, source: &str, input: &str, limits: Limits) -> cpprunner::Result<RunResult> {
+    runner.spawn(source, input, limits)?.wait()
+}
+
 pub const fn limits(time_ms: u64) -> Limits {
     Limits::new().with_time_ms(time_ms)
 }
 
 pub fn run_with(source: &str, input: &str, limits: Limits) -> RunResult {
     let (_dir, runner) = runner();
-    runner.run(source, input, limits).unwrap()
+    run_on(&runner, source, input, limits).unwrap()
 }
 
 pub fn run(source: &str, input: &str, time_ms: u64) -> RunResult {

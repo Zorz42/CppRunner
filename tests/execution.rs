@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_with, run_within};
+use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_on, run_with, run_within};
 use cpprunner::{CrashReason, Limits, RunResult};
 use std::time::{Duration, Instant};
 
@@ -63,8 +63,8 @@ fn infinite_loop_is_stopped_soon_after_the_limit() {
 #[test]
 fn over_a_sub_second_limit_is_a_timeout() {
     let (_dir, runner) = common::runner();
-    assert_eq!(runner.run(BUSY_LOOP_MS, "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
-    assert_output(&runner.run(BUSY_LOOP_MS, "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
+    assert_eq!(run_on(&runner, BUSY_LOOP_MS, "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
+    assert_output(&run_on(&runner, BUSY_LOOP_MS, "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, runner, runs_logged};
+use common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, run_on, runner, runs_logged};
 use cpprunner::{Error, Limits, MAX_CACHED_OUTPUT_BYTES, MAX_DEFAULT_WORKERS, RunHandle, RunResult, Runner};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -21,7 +21,7 @@ fn types_are_thread_safe() {
 #[test]
 fn run_program() {
     let (_dir, runner) = runner();
-    assert_output(&runner.run(HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
+    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn compile_error() {
     let (_dir, runner) = runner();
     let faulty = "int main() { compile error here }";
     assert!(matches!(runner.compile(faulty), Err(Error::CompilerError { .. })));
-    assert!(matches!(runner.run(faulty, "", limits(1000)), Err(Error::CompilerError { .. })));
+    assert!(matches!(run_on(&runner, faulty, "", limits(1000)), Err(Error::CompilerError { .. })));
     assert!(matches!(runner.spawn(faulty, "", limits(1000)), Err(Error::CompilerError { .. })));
 }
 
@@ -38,7 +38,7 @@ fn compile_then_run() {
     let (dir, runner) = runner();
     runner.compile(ECHO).unwrap();
     assert_eq!(binaries_in(dir.path()).len(), 1);
-    assert_output(&runner.run(ECHO, "5", limits(1000)).unwrap(), "5");
+    assert_output(&run_on(&runner, ECHO, "5", limits(1000)).unwrap(), "5");
     assert_eq!(binaries_in(dir.path()).len(), 1);
 }
 
@@ -82,7 +82,7 @@ fn build_folder_is_created() {
     let dir = TempDir::new().unwrap();
     let nested = dir.path().join("a").join("b");
     let runner = Runner::new(&nested).unwrap();
-    assert_output(&runner.run(HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
+    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
     assert!(nested.is_dir());
 }
 
@@ -100,7 +100,7 @@ fn runners_sharing_a_build_folder() {
     let workers: Vec<_> = (0..8)
         .map(|_| {
             let build_folder = dir.path().to_path_buf();
-            std::thread::spawn(move || Runner::new(&build_folder)?.run(HELLO_WORLD, "", limits(5000)))
+            std::thread::spawn(move || run_on(&Runner::new(&build_folder)?, HELLO_WORLD, "", limits(5000)))
         })
         .collect();
 
@@ -116,7 +116,7 @@ fn one_runner_shared_between_threads() {
     let (_dir, runner) = runner();
     let runner = &runner;
     std::thread::scope(|scope| {
-        let threads: Vec<_> = (0..8).map(|i| (i, scope.spawn(move || runner.run(ECHO, &i.to_string(), limits(5000))))).collect();
+        let threads: Vec<_> = (0..8).map(|i| (i, scope.spawn(move || run_on(runner, ECHO, &i.to_string(), limits(5000))))).collect();
         for (i, thread) in threads {
             assert_output(&thread.join().unwrap().unwrap(), &i.to_string());
         }
@@ -129,7 +129,7 @@ fn compiled_programs_are_picked_up_by_new_runners() {
     let dir = TempDir::new().unwrap();
     let run_once = |input: &str| {
         let runner = Runner::new(dir.path()).unwrap();
-        assert_output(&runner.run(ECHO, input, limits(1000)).unwrap(), input);
+        assert_output(&run_on(&runner, ECHO, input, limits(1000)).unwrap(), input);
     };
 
     run_once("0");
@@ -146,7 +146,7 @@ fn missing_binary_is_an_error_not_a_crash() {
     runner.compile(HELLO_WORLD).unwrap();
     std::fs::remove_file(&binaries_in(dir.path())[0]).unwrap();
 
-    let result = runner.run(HELLO_WORLD, "", limits(1000));
+    let result = run_on(&runner, HELLO_WORLD, "", limits(1000));
     assert!(matches!(result, Err(Error::RunFailed { .. })), "got {result:?}");
 }
 
@@ -203,7 +203,7 @@ fn runs_go_in_parallel() {
 fn fewer_workers_run_fewer_at_once() {
     let (_dir, runner) = runner();
     runner.set_workers(4);
-    runner.run(SLEEP_300_MS, "warm", limits(1000)).unwrap();
+    run_on(&runner, SLEEP_300_MS, "warm", limits(1000)).unwrap();
     runner.set_workers(1);
     let start = Instant::now();
     let handles: Vec<_> = (0..3).map(|i| runner.spawn(SLEEP_300_MS, i.to_string(), limits(1000)).unwrap()).collect();
@@ -313,7 +313,7 @@ fn small_outputs_are_cached() {
     let program = logging_echo(&log);
 
     for _ in 0..3 {
-        assert_output(&runner.run(&program, "YES", limits(1000)).unwrap(), "YES");
+        assert_output(&run_on(&runner, &program, "YES", limits(1000)).unwrap(), "YES");
     }
     assert_eq!(runs_logged(&log), ["YES"]);
 }
@@ -321,8 +321,8 @@ fn small_outputs_are_cached() {
 #[test]
 fn cached_results_keep_their_measurements() {
     let (_dir, runner) = runner();
-    let first = runner.run(ECHO, "42", limits(1000)).unwrap();
-    assert_eq!(runner.run(ECHO, "42", limits(1000)).unwrap(), first);
+    let first = run_on(&runner, ECHO, "42", limits(1000)).unwrap();
+    assert_eq!(run_on(&runner, ECHO, "42", limits(1000)).unwrap(), first);
 }
 
 #[test]
@@ -334,8 +334,8 @@ fn large_outputs_are_not_cached() {
     let longest_cached = "y".repeat(MAX_CACHED_OUTPUT_BYTES);
 
     for _ in 0..2 {
-        assert_output(&runner.run(&program, &long, limits(1000)).unwrap(), &long);
-        assert_output(&runner.run(&program, &longest_cached, limits(1000)).unwrap(), &longest_cached);
+        assert_output(&run_on(&runner, &program, &long, limits(1000)).unwrap(), &long);
+        assert_output(&run_on(&runner, &program, &longest_cached, limits(1000)).unwrap(), &longest_cached);
     }
     assert_eq!(runs_logged(&log), [long.clone(), longest_cached, long]);
 }
@@ -353,13 +353,13 @@ fn failures_are_cached() {
     ];
     let limits = Limits::new().with_time_ms(200).with_memory_mb(32);
 
-    let first: Vec<_> = programs.iter().map(|program| runner.run(program, "", limits).unwrap()).collect();
+    let first: Vec<_> = programs.iter().map(|program| run_on(&runner, program, "", limits).unwrap()).collect();
     assert_eq!(first[0], RunResult::TimedOut);
     assert!(matches!(first[1], RunResult::Crashed(_)));
     assert_eq!(first[2], RunResult::MemoryLimitExceeded);
 
     let start = Instant::now();
-    let again: Vec<_> = programs.iter().map(|program| runner.run(program, "", limits).unwrap()).collect();
+    let again: Vec<_> = programs.iter().map(|program| run_on(&runner, program, "", limits).unwrap()).collect();
     assert_eq!(again, first);
     assert!(start.elapsed() < Duration::from_millis(150), "cached results took {:?}", start.elapsed());
     assert_eq!(runs_logged(&log).len(), 3);
@@ -371,12 +371,12 @@ fn cache_is_keyed_by_input_and_limits() {
     let log = dir.path().join("log");
     let program = logging_echo(&log);
 
-    runner.run(&program, "a", limits(1000)).unwrap();
-    runner.run(&program, "b", limits(1000)).unwrap();
-    runner.run(&program, "a", limits(2000)).unwrap();
-    runner.run(&program, "a", limits(1000).with_memory_mb(512)).unwrap();
-    runner.run(&program, "a", limits(1000).with_output_bytes(10)).unwrap();
-    runner.run(&program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "b", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(2000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000).with_memory_mb(512)).unwrap();
+    run_on(&runner, &program, "a", limits(1000).with_output_bytes(10)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
 
     assert_eq!(runs_logged(&log), ["a", "b", "a", "a", "a"]);
 }
@@ -385,8 +385,8 @@ fn cache_is_keyed_by_input_and_limits() {
 fn cache_is_keyed_by_program() {
     let (dir, runner) = runner();
     let (log_1, log_2) = (dir.path().join("log1"), dir.path().join("log2"));
-    runner.run(&logging_echo(&log_1), "a", limits(1000)).unwrap();
-    runner.run(&logging_echo(&log_2), "a", limits(1000)).unwrap();
+    run_on(&runner, &logging_echo(&log_1), "a", limits(1000)).unwrap();
+    run_on(&runner, &logging_echo(&log_2), "a", limits(1000)).unwrap();
     assert_eq!((runs_logged(&log_1).len(), runs_logged(&log_2).len()), (1, 1));
 }
 
@@ -396,9 +396,9 @@ fn spawn_fresh_ignores_the_cache_and_updates_it() {
     let log = dir.path().join("log");
     let program = logging_echo(&log);
 
-    runner.run(&program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
     runner.spawn_fresh(&program, "a", limits(1000)).unwrap().wait().unwrap();
-    runner.run(&program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
 
     assert_eq!(runs_logged(&log).len(), 2);
 }
@@ -408,14 +408,14 @@ fn result_cache_can_be_turned_off() {
     let (dir, runner) = runner();
     let log = dir.path().join("log");
     let program = logging_echo(&log);
-    runner.run(&program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
 
     runner.set_result_cache(false);
-    runner.run(&program, "a", limits(1000)).unwrap();
-    runner.run(&program, "b", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "b", limits(1000)).unwrap();
     runner.set_result_cache(true);
-    runner.run(&program, "a", limits(1000)).unwrap();
-    runner.run(&program, "b", limits(1000)).unwrap();
+    run_on(&runner, &program, "a", limits(1000)).unwrap();
+    run_on(&runner, &program, "b", limits(1000)).unwrap();
 
     assert_eq!(runs_logged(&log), ["a", "a", "b", "b"]);
 }
@@ -427,9 +427,9 @@ fn result_cache_is_shared_through_the_build_folder() {
     let program = logging_echo(&log);
     let build_folder = dir.path().join("build");
 
-    Runner::new(&build_folder).unwrap().run(&program, "a", limits(1000)).unwrap();
+    run_on(&Runner::new(&build_folder).unwrap(), &program, "a", limits(1000)).unwrap();
     let later = Runner::new(&build_folder).unwrap();
-    assert_output(&later.run(&program, "a", limits(1000)).unwrap(), "a");
+    assert_output(&run_on(&later, &program, "a", limits(1000)).unwrap(), "a");
 
     assert_eq!(runs_logged(&log), ["a"]);
 }
@@ -438,13 +438,13 @@ fn result_cache_is_shared_through_the_build_folder() {
 fn damaged_cache_file_is_ignored() {
     let (dir, runner) = runner();
     std::fs::write(dir.path().join("results.cache"), "garbage\n0 1 2\n\u{0}\u{1}\nffff ffff 1 - 1 OK 1 1 -zz\n").unwrap();
-    assert_output(&runner.run(ECHO, "9", limits(1000)).unwrap(), "9");
+    assert_output(&run_on(&runner, ECHO, "9", limits(1000)).unwrap(), "9");
 }
 
 #[test]
 fn clean_build_folder_keeps_compiled_programs_and_the_cache() {
     let (dir, runner) = runner();
-    runner.run(HELLO_WORLD, "", limits(1000)).unwrap();
+    run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap();
     let stray = dir.path().join("stray.txt");
     std::fs::write(&stray, "junk").unwrap();
     let scratch = dir.path().join(".scratch-abc");
@@ -459,7 +459,7 @@ fn clean_build_folder_keeps_compiled_programs_and_the_cache() {
     assert!(!scratch.exists());
     assert!(other_folder.exists());
     assert!(dir.path().join("results.cache").exists());
-    assert_output(&runner.run(HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
+    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
 }
 
 #[test]
@@ -472,7 +472,7 @@ fn clean_build_folder_removes_programs_of_other_runners() {
     runner.clean_build_folder().unwrap();
 
     assert_eq!(files_in(dir.path()).len(), 2);
-    assert_output(&runner.run(HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
+    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
 }
 
 #[test]

@@ -211,11 +211,6 @@ impl Runner {
         Ok((hash, executable))
     }
 
-    /// Runs `source_code` on `input` and waits for it.
-    pub fn run(&self, source_code: &str, input: &str, limits: Limits) -> Result<RunResult> {
-        self.spawn(source_code, input, limits)?.wait()
-    }
-
     /// Queues a run of `source_code` on `input`, compiling it first if needed. Runs start in the
     /// order they are queued. A cached result is returned without running the program.
     pub fn spawn<I: Into<Arc<str>>>(&self, source_code: &str, input: I, limits: Limits) -> Result<RunHandle> {

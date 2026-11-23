@@ -8,8 +8,8 @@ Compile and run C++ programs from Rust.
 - Compiled programs are kept in a build folder that several threads and processes can share.
 - Runs have CPU time, peak memory and output limits; the time and memory used are measured, and
   programs that block or print forever are stopped.
-- Runs can be queued and collected later through a [`RunHandle`], and run in parallel in the order
-  they were queued. A queued run can be cancelled before it starts.
+- Every run is queued: [`Runner::spawn`] returns a [`RunHandle`] to wait for or cancel. Runs go in
+  parallel, starting in the order they were queued; a queued run can be cancelled before it starts.
 - Results that are small to store are cached in the build folder: every time out, memory limit and
   crash, and successful runs whose output is at most [`MAX_CACHED_OUTPUT_BYTES`] long, such as a
   single number or `YES`/`NO`.
@@ -26,11 +26,12 @@ let build_folder = tempfile::tempdir()?;
 let runner = Runner::new(build_folder.path())?;
 let sum = "#include <iostream>\nint main() { int a, b; std::cin >> a >> b; std::cout << a + b; }";
 
-match runner.run(sum, "1 2", Limits::default())? {
+match runner.spawn(sum, "1 2", Limits::default())?.wait()? {
     RunResult::Ok { output, time_ms, memory_kb } => println!("{output} ({time_ms} ms, {memory_kb} kB)"),
     other => println!("{other:?}"),
 }
-assert_eq!(runner.run("int main() { while (true) {} }", "", Limits::new().with_time_ms(100))?, RunResult::TimedOut);
+let hang = runner.spawn("int main() { while (true) {} }", "", Limits::new().with_time_ms(100))?;
+assert_eq!(hang.wait()?, RunResult::TimedOut);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -71,12 +72,6 @@ Notes:
 - macOS cannot cap a process's address space, so a program far over its memory limit runs to
   completion before it is reported as `MemoryLimitExceeded`.
 - Stderr of programs is discarded.
-
-## Command line
-
-```sh
-cargo run --example run -- solution.cpp --time-ms 2000 --memory-mb 256 [--build-folder DIR] < input.txt
-```
 
 ## Testing
 
