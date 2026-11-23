@@ -38,6 +38,10 @@ pub enum Error {
         /// What went wrong.
         details: String,
     },
+
+    /// The run was cancelled, or its runner dropped, before it started.
+    #[error("The run was cancelled before it started")]
+    Cancelled,
 }
 
 impl Error {

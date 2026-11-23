@@ -77,7 +77,6 @@ pub fn install(scratch: &Path, destination: &Path) -> Result<()> {
 pub struct CompiledProgram {
     pub source: PathBuf,
     pub executable: PathBuf,
-    pub hash: u64,
 }
 
 pub struct Compiler {
@@ -155,14 +154,9 @@ impl Compiler {
         state.finish()
     }
 
-    pub fn compile_cached(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
-        std::fs::create_dir_all(build_folder).map_err(Error::io(build_folder))?;
-        self.compile_cached_in(&canonicalize(build_folder)?, source_code)
-    }
-
-    /// Compiles in a private scratch folder and renames the results into place, so that threads and
+    /// `build_folder` must be canonical. Compiles in a private scratch folder and renames the results into place, so that threads and
     /// processes sharing the build folder never see half-written files.
-    pub fn compile_cached_in(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
+    pub fn compile_cached(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
         let hash = self.program_hash(source_code);
         let source = build_folder.join(format!("p{hash}.cpp"));
         let executable = Self::executable_path(&source)?;
@@ -176,6 +170,6 @@ impl Compiler {
             install(&scratch_source, &source)?;
             compiled?;
         }
-        Ok(CompiledProgram { source, executable, hash })
+        Ok(CompiledProgram { source, executable })
     }
 }

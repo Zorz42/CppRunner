@@ -1,12 +1,12 @@
-use cpprunner::{COMPILER_ENV_VAR, CppRunner, Error};
+use cpprunner::{COMPILER_ENV_VAR, Error, Runner};
 use tempfile::TempDir;
 
-fn runner_with(build_folder: &TempDir, compiler: Option<&str>) -> cpprunner::Result<CppRunner> {
+fn runner_with(build_folder: &TempDir, compiler: Option<&str>) -> cpprunner::Result<Runner> {
     match compiler {
         Some(value) => unsafe { std::env::set_var(COMPILER_ENV_VAR, value) },
         None => unsafe { std::env::remove_var(COMPILER_ENV_VAR) },
     }
-    CppRunner::new(build_folder.path())
+    Runner::new(build_folder.path())
 }
 
 /// The only test in this binary that touches the environment, so it races with nothing.
@@ -19,8 +19,7 @@ fn env_var_selects_the_compiler() {
     assert!(matches!(runner_with(&dir, Some("/no/such/dir/g++")), Err(Error::CompilerNotFound)));
 
     let compiler = if cfg!(windows) { "g++" } else { "c++" };
-    let mut runner = runner_with(&dir, Some(compiler)).unwrap();
-    runner.add_program("int main() {}").unwrap();
+    runner_with(&dir, Some(compiler)).unwrap().compile("int main() {}").unwrap();
 
     runner_with(&dir, None).unwrap();
 }

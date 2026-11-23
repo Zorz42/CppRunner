@@ -1,5 +1,5 @@
-use crate::compiler::{Compiler, find_compiler, install};
-use crate::{CppRunner, Error};
+use crate::compiler::{Compiler, canonicalize, find_compiler, install};
+use crate::{Error, Runner};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -133,27 +133,18 @@ fn program_hash_depends_on_the_source() {
 }
 
 #[test]
-fn compile_cached_creates_the_build_folder() {
-    let dir = TempDir::new().unwrap();
-    let build_folder = dir.path().join("a").join("b");
-    let compiled = Compiler::detect().unwrap().compile_cached(&build_folder, HELLO_WORLD).unwrap();
-    assert!(compiled.executable.is_file());
-    assert_eq!(std::fs::read_to_string(&compiled.source).unwrap(), HELLO_WORLD);
-    assert_eq!(compiled.executable.parent(), Some(dunce::canonicalize(&build_folder).unwrap().as_path()));
-    assert!(stdout_of(&compiled.executable).contains("Hello, World!"));
-}
-
-#[test]
 fn compile_cached_reuses_the_executable() {
     let dir = TempDir::new().unwrap();
+    let build_folder = canonicalize(dir.path()).unwrap();
     let compiler = Compiler::detect().unwrap();
-    let first = compiler.compile_cached(dir.path(), HELLO_WORLD).unwrap();
+    let first = compiler.compile_cached(&build_folder, HELLO_WORLD).unwrap();
     let modified = std::fs::metadata(&first.executable).unwrap().modified().unwrap();
 
-    let second = compiler.compile_cached(dir.path(), HELLO_WORLD).unwrap();
+    let second = compiler.compile_cached(&build_folder, HELLO_WORLD).unwrap();
 
-    assert_eq!((&first.source, &first.executable, first.hash), (&second.source, &second.executable, second.hash));
-    assert_eq!(first.hash, compiler.program_hash(HELLO_WORLD));
+    assert_eq!((&first.source, &first.executable), (&second.source, &second.executable));
+    assert_eq!(std::fs::read_to_string(&first.source).unwrap(), HELLO_WORLD);
+    assert!(stdout_of(&first.executable).contains("Hello, World!"));
     assert_eq!(std::fs::metadata(&second.executable).unwrap().modified().unwrap(), modified);
     assert_eq!(files_in(dir.path()).len(), 2, "{:?}", files_in(dir.path()));
 }
@@ -161,26 +152,12 @@ fn compile_cached_reuses_the_executable() {
 #[test]
 fn compile_cached_failure_keeps_only_the_source() {
     let dir = TempDir::new().unwrap();
-    let result = Compiler::detect().unwrap().compile_cached(dir.path(), "int main() { oops }");
+    let result = Compiler::detect().unwrap().compile_cached(&canonicalize(dir.path()).unwrap(), "int main() { oops }");
     assert!(matches!(result, Err(Error::CompilerError { .. })));
 
     let files = files_in(dir.path());
     assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(files[0].extension().unwrap(), "cpp");
-}
-
-#[test]
-fn runner_finds_what_compile_cached_compiled() {
-    let dir = TempDir::new().unwrap();
-    let compiled = Compiler::detect().unwrap().compile_cached(dir.path(), HELLO_WORLD).unwrap();
-    let modified = std::fs::metadata(&compiled.executable).unwrap().modified().unwrap();
-
-    let mut runner = CppRunner::new(dir.path()).unwrap();
-    let program = runner.add_program(HELLO_WORLD).unwrap();
-
-    assert_eq!(runner.executable(program), compiled.executable);
-    assert_eq!(runner.program_hash(program), compiled.hash);
-    assert_eq!(std::fs::metadata(&compiled.executable).unwrap().modified().unwrap(), modified);
 }
 
 #[test]
@@ -194,4 +171,16 @@ fn install_keeps_an_existing_destination() {
 
     install(&scratch, &destination).unwrap();
     assert!(install(&scratch, &dir.path().join("missing")).is_err());
+}
+
+#[test]
+fn runner_reuses_what_another_compiled() {
+    let dir = TempDir::new().unwrap();
+    let compiled = Compiler::detect().unwrap().compile_cached(&canonicalize(dir.path()).unwrap(), HELLO_WORLD).unwrap();
+    let modified = std::fs::metadata(&compiled.executable).unwrap().modified().unwrap();
+
+    Runner::new(dir.path()).unwrap().compile(HELLO_WORLD).unwrap();
+
+    assert_eq!(std::fs::metadata(&compiled.executable).unwrap().modified().unwrap(), modified);
+    assert_eq!(files_in(dir.path()).len(), 2);
 }

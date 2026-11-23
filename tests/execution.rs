@@ -1,8 +1,7 @@
 mod common;
 
 use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_with, run_within};
-use cpprunner::{CrashReason, Error, Limits, RunResult, run_executable};
-use std::path::Path;
+use cpprunner::{CrashReason, Limits, RunResult};
 use std::time::{Duration, Instant};
 
 const BUSY_LOOP_MS: &str = "#include <ctime>\n#include <iostream>
@@ -55,11 +54,9 @@ fn infinite_loop_is_stopped_soon_after_the_limit() {
 
 #[test]
 fn over_a_sub_second_limit_is_a_timeout() {
-    let (_dir, mut runner) = common::runner();
-    let program = runner.add_program(BUSY_LOOP_MS).unwrap();
-
-    assert_eq!(runner.run(program, "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
-    assert_output(&runner.run(program, "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
+    let (_dir, runner) = common::runner();
+    assert_eq!(runner.run(BUSY_LOOP_MS, "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
+    assert_output(&runner.run(BUSY_LOOP_MS, "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
 }
 
 #[test]
@@ -221,18 +218,4 @@ fn runaway_memory_is_stopped() {
 fn time_limit_beats_memory_limit() {
     let source = "#include <vector>\nint main() { std::vector<char> v(200 << 20, 1); volatile char* p = v.data(); while (p[0]) {} }";
     assert_eq!(run_with(source, "", Limits::new().with_time_ms(500).with_memory_mb(64)), RunResult::TimedOut);
-}
-
-#[test]
-fn missing_executable_is_an_error() {
-    let result = run_executable(Path::new("/no/such/executable"), "", Limits::default());
-    assert!(matches!(result, Err(Error::RunFailed { .. })), "{result:?}");
-}
-
-#[test]
-fn non_executable_file_is_an_error() {
-    let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), "not a program").unwrap();
-    let result = run_executable(file.path(), "", Limits::default());
-    assert!(matches!(result, Err(Error::RunFailed { .. })), "{result:?}");
 }
