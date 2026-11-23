@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// The default [`Limits::time_ms`].
@@ -15,7 +16,7 @@ pub const DEFAULT_OUTPUT_BYTES: u64 = 256 << 20;
 /// assert_eq!(limits.memory_kb, Some(256 << 10));
 /// assert_eq!(Limits::default(), Limits::new());
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Limits {
     /// CPU time in milliseconds; zero counts as one. A program that blocks is stopped after twice
     /// this plus two seconds of wall time.

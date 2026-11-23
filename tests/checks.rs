@@ -77,7 +77,8 @@ fn verdicts_of_long_outputs_are_cached() {
     let again = runner.spawn_checked(PRINT_LINES, "1000", answer.as_str(), &Check::Tokens, Limits::default()).unwrap();
     assert!(again.is_cached());
     assert!(accepted(&again.wait().unwrap()));
-    assert!(std::fs::metadata(dir.path().join("results.cache")).unwrap().len() < 200);
+    let cache = std::fs::read_to_string(dir.path().join("results.cache")).unwrap();
+    assert!(cache.len() < 300, "{cache}");
 }
 
 #[test]

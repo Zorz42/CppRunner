@@ -1,5 +1,6 @@
+use serde::{Deserialize, Serialize};
 /// How a run ended.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum RunResult {
     /// Exited with code zero within all limits.
     Ok {
@@ -19,7 +20,7 @@ pub enum RunResult {
 }
 
 /// Why a program [crashed](RunResult::Crashed).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum CrashReason {
     /// Exited with a non-zero code. On Windows this includes crashes, as exception codes.
     ExitCode(i32),
@@ -30,7 +31,7 @@ pub enum CrashReason {
 }
 
 /// How a run ended, with its output [checked](crate::Check) against an answer.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum Verdict {
     /// Exited with code zero within all limits, and the output was accepted.
     Accepted {

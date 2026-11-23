@@ -23,6 +23,8 @@ log = { version = "0.4", default-features = false }
 dunce = { version = "1.0", default-features = false }
 tempfile = { version = "3.20", default-features = false }
 xxhash-rust = { version = "0.8.21", default-features = false, features = ["xxh3"] }
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", default-features = false }

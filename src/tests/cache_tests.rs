@@ -79,16 +79,18 @@ fn damaged_lines_are_ignored() {
     let good = ResultCache::new(path.clone());
     let key = Key::new(5, "in", Limits::new());
     good.insert_run(key, &RunResult::TimedOut);
+
+    let better = serde_json::to_string(&(key, Entry::Run(ok("1")))).unwrap();
+    let checked = Key::checked(5, "in", 7, Limits::new());
+    let mismatched = serde_json::to_string(&(checked, Entry::Run(ok("1")))).unwrap();
     let mut text = std::fs::read_to_string(&path).unwrap();
-    text.insert_str(
-        0,
-        "garbage\n0000000000000001 0000000000000002 - 1000 - 5 OK 1 2 -abc\n\n1 2 - 3 4 5 TLE extra\n1 2 3 4 5 6 OK 1 2 -\n1 2 - 4 5 6 AC 1 2\n",
-    );
-    text.push_str("0000000000000001 0000000000000002 10");
+    text.insert_str(0, &format!("garbage\n\n[1, 2]\n{mismatched}\n{better} extra\n"));
+    text.push_str(&better[..better.len() / 2]);
     std::fs::write(&path, text).unwrap();
 
     let reader = ResultCache::new(path);
     assert_eq!(reader.get(&key), Some(Entry::Run(RunResult::TimedOut)));
+    assert_eq!(reader.get(&checked), None);
 }
 
 #[test]
