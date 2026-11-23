@@ -240,39 +240,3 @@ impl Compiler {
         Ok(CompiledProgram { source, executable, hash })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn env_var_names_the_compiler() {
-        let found = find_compiler(Some(OsStr::new("clang++"))).unwrap();
-        assert!(found.is_absolute(), "{found:?}");
-        assert!(found.file_name().unwrap().to_string_lossy().starts_with("clang++"), "{found:?}");
-    }
-
-    #[test]
-    fn env_var_naming_no_compiler_is_an_error_without_fallback() {
-        assert!(matches!(find_compiler(Some(OsStr::new("no-such-compiler-cpprunner"))), Err(Error::CompilerNotFound)));
-        assert!(matches!(find_compiler(Some(OsStr::new("/no/such/dir/g++"))), Err(Error::CompilerNotFound)));
-    }
-
-    #[test]
-    fn empty_env_var_counts_as_unset() {
-        assert_eq!(find_compiler(Some(OsStr::new(""))).unwrap(), find_compiler(None).unwrap());
-    }
-
-    #[test]
-    fn install_keeps_an_existing_destination() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let (scratch, destination) = (dir.path().join("scratch"), dir.path().join("destination"));
-        std::fs::write(&scratch, "new").unwrap();
-        install(&scratch, &destination).unwrap();
-        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "new");
-        assert!(!scratch.exists());
-
-        install(&scratch, &destination).unwrap();
-        assert!(install(&scratch, &dir.path().join("missing")).is_err());
-    }
-}

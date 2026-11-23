@@ -179,6 +179,14 @@ fn output_limit_is_exact() {
 }
 
 #[test]
+fn output_limit_extremes() {
+    let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
+    assert_eq!(run_with(source, "0", Limits::new().with_output_bytes(0)).output(), Some(""));
+    assert_eq!(run_with(source, "1", Limits::new().with_output_bytes(0)), RunResult::Crashed(CrashReason::OutputLimitExceeded));
+    assert_eq!(run_with(source, "5", Limits::new().with_output_bytes(u64::MAX)).output(), Some("xxxxx"));
+}
+
+#[test]
 fn peak_memory_is_reported() {
     let peak = |megabytes: usize| match run(ALLOCATE, &megabytes.to_string(), 5000) {
         RunResult::Ok { memory_kb, .. } => memory_kb,
