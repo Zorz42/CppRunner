@@ -238,6 +238,7 @@ fn cancelled_runs_do_not_start() {
     runner.set_workers(1);
     let log = dir.path().join("log");
     let program = logging_echo(&log);
+    runner.compile(&program).unwrap();
 
     let blocker = runner.spawn(SLEEP_300_MS, "blocker", limits(1000)).unwrap();
     let handles: Vec<_> = (0..6).map(|i| runner.spawn(&program, i.to_string(), limits(1000)).unwrap()).collect();
@@ -263,6 +264,7 @@ fn dropped_handles_cancel_their_runs() {
     runner.set_workers(1);
     let log = dir.path().join("log");
     let program = logging_echo(&log);
+    runner.compile(&program).unwrap();
 
     let blocker = runner.spawn(SLEEP_300_MS, "blocker", limits(1000)).unwrap();
     drop(runner.spawn(&program, "dropped", limits(1000)).unwrap());

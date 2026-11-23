@@ -214,6 +214,7 @@ fn outputs_can_be_checked_alone() {
 fn checked_runs_can_be_cancelled() {
     let (_dir, runner) = runner();
     runner.set_workers(1);
+    runner.compile(ECHO).unwrap();
     let limits = Limits::new().with_time_ms(300);
     let busy = runner.spawn_checked("int main() { while (true) {} }", "", "", &Check::Tokens, limits).unwrap();
     let queued = runner.spawn_checked(ECHO, "1", "1", &Check::Tokens, Limits::default()).unwrap();
