@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// Names the C++ compiler to use, as a path or a program on `PATH`. If unset, the first of `g++`,
+/// `c++` and `clang++` found is used.
 pub const COMPILER_ENV_VAR: &str = "GCC_PATH";
 
 pub const SCRATCH_PREFIX: &str = ".scratch-";
@@ -14,7 +16,7 @@ pub fn canonicalize(path: &Path) -> Result<PathBuf> {
     dunce::canonicalize(path).map_err(Error::io(path))
 }
 
-fn find_compiler(from_env: Option<&OsStr>) -> Result<PathBuf> {
+pub fn find_compiler(from_env: Option<&OsStr>) -> Result<PathBuf> {
     if let Some(compiler) = from_env.filter(|compiler| !compiler.is_empty()) {
         return which::which(compiler).map_err(|_not_found| Error::CompilerNotFound);
     }
@@ -65,91 +67,32 @@ fn has_static_libraries(compiler: &Path) -> bool {
 
 /// On Windows the rename fails while `destination` is open, but names are content hashes, so an
 /// existing `destination` is already correct.
-fn install(scratch: &Path, destination: &Path) -> Result<()> {
+pub fn install(scratch: &Path, destination: &Path) -> Result<()> {
     std::fs::rename(scratch, destination).or_else(|err| {
         let _ = std::fs::remove_file(scratch);
         if destination.exists() { Ok(()) } else { Err(Error::io(destination)(err)) }
     })
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CompiledProgram {
     pub source: PathBuf,
     pub executable: PathBuf,
     pub hash: u64,
 }
 
-/// ```no_run
-/// use cpprunner::Compiler;
-///
-/// let compiler = Compiler::detect()?.with_standard("c++20").with_optimization("3").with_arg("-DLOCAL");
-/// compiler.compile("solution.cpp".as_ref(), "solution".as_ref())?;
-/// # Ok::<(), cpprunner::Error>(())
-/// ```
-#[derive(Clone, Debug)]
 pub struct Compiler {
     path: PathBuf,
-    standard: String,
-    optimization: String,
-    extra_args: Vec<String>,
     links_statically: OnceLock<bool>,
 }
 
 impl Compiler {
     pub fn detect() -> Result<Self> {
-        Ok(Self::at(find_compiler(std::env::var_os(COMPILER_ENV_VAR).as_deref())?))
-    }
-
-    pub fn with_path<P: AsRef<Path>>(compiler: P) -> Result<Self> {
-        Ok(Self::at(which::which(compiler.as_ref()).map_err(|_not_found| Error::CompilerNotFound)?))
-    }
-
-    fn at(path: PathBuf) -> Self {
+        let path = find_compiler(std::env::var_os(COMPILER_ENV_VAR).as_deref())?;
         debug!("Using the C++ compiler {}", path.display());
-        Self {
+        Ok(Self {
             path,
-            standard: "c++17".to_owned(),
-            optimization: "2".to_owned(),
-            extra_args: Vec::new(),
             links_statically: OnceLock::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn with_standard(mut self, standard: &str) -> Self {
-        standard.clone_into(&mut self.standard);
-        self
-    }
-
-    #[must_use]
-    pub fn with_optimization(mut self, level: &str) -> Self {
-        level.clone_into(&mut self.optimization);
-        self
-    }
-
-    /// Extra arguments go after the source file, so that libraries such as `-lm` link.
-    #[must_use]
-    pub fn with_arg(mut self, arg: &str) -> Self {
-        self.extra_args.push(arg.to_owned());
-        self
-    }
-
-    #[must_use]
-    pub fn with_args<I: IntoIterator<Item = S>, S: AsRef<str>>(mut self, args: I) -> Self {
-        self.extra_args.extend(args.into_iter().map(|arg| arg.as_ref().to_owned()));
-        self
-    }
-
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    #[must_use]
-    pub fn flags(&self) -> Vec<String> {
-        let mut flags = vec![format!("-std={}", self.standard), format!("-O{}", self.optimization)];
-        flags.extend(self.extra_args.iter().cloned());
-        flags
+        })
     }
 
     pub fn executable_path(source: &Path) -> Result<PathBuf> {
@@ -169,7 +112,7 @@ impl Compiler {
 
     pub fn compile(&self, source: &Path, executable: &Path) -> Result<()> {
         let mut command = Command::new(&self.path);
-        command.arg(format!("-std={}", self.standard)).arg(format!("-O{}", self.optimization));
+        command.args(["-std=c++17", "-O2"]);
 
         #[cfg(windows)]
         command.args(["-static", "-Wl,--stack,536870912"]);
@@ -182,7 +125,7 @@ impl Compiler {
             command.arg(if links_statically { "-static" } else { "-Wl,--as-needed" });
         }
 
-        command.arg(source).arg("-o").arg(executable).args(&self.extra_args);
+        command.arg(source).arg("-o").arg(executable);
 
         debug!("Running command: {command:?}");
         let process = command.output().map_err(Error::io(&self.path))?;
@@ -204,14 +147,10 @@ impl Compiler {
         Ok(())
     }
 
-    #[must_use]
     pub fn program_hash(&self, source_code: &str) -> u64 {
         let mut state = DefaultHasher::new();
         source_code.hash(&mut state);
         self.path.hash(&mut state);
-        self.standard.hash(&mut state);
-        self.optimization.hash(&mut state);
-        self.extra_args.hash(&mut state);
         env!("CARGO_PKG_VERSION").hash(&mut state);
         state.finish()
     }
@@ -223,7 +162,7 @@ impl Compiler {
 
     /// Compiles in a private scratch folder and renames the results into place, so that threads and
     /// processes sharing the build folder never see half-written files.
-    pub(crate) fn compile_cached_in(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
+    pub fn compile_cached_in(&self, build_folder: &Path, source_code: &str) -> Result<CompiledProgram> {
         let hash = self.program_hash(source_code);
         let source = build_folder.join(format!("p{hash}.cpp"));
         let executable = Self::executable_path(&source)?;

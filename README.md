@@ -2,8 +2,9 @@
 
 Compile and run C++ programs from Rust.
 
-- Finds `g++`, `c++` or `clang++` (or MinGW on Windows), or the compiler named by `GCC_PATH`.
-- Caches compiled programs in a build folder keyed by source, compiler and flags; several threads
+- Finds `g++`, `c++` or `clang++` (or MinGW on Windows), or the compiler named by `GCC_PATH`,
+  and compiles with `-std=c++17 -O2`.
+- Caches compiled programs in a build folder keyed by source and compiler; several threads
   and processes can share one folder safely.
 - Runs programs with CPU time, peak memory and output limits, measuring the time and memory they
   used, and stops ones that block or print forever.
@@ -20,7 +21,7 @@ use cpprunner::{Limits, RunResult};
 let result = cpprunner::run_file("solution.cpp".as_ref(), "1 2\n", Limits::default())?;
 match result {
     RunResult::Ok { output, time_ms, memory_kb } => println!("{output} ({time_ms} ms, {memory_kb} kB)"),
-    other => println!("{}", other.verdict()),
+    other => println!("{other:?}"),
 }
 # Ok::<(), cpprunner::Error>(())
 ```
@@ -38,18 +39,17 @@ assert_eq!(result, RunResult::TimedOut);
 ## Many programs and inputs, with a cached build folder
 
 ```rust
-use cpprunner::{Compiler, CppRunner, Limits};
+use cpprunner::{CppRunner, Limits, RunResult};
 
 let build_folder = tempfile::tempdir()?;
-let compiler = Compiler::detect()?.with_standard("c++20");
-let mut runner = CppRunner::with_compiler(build_folder.path(), compiler)?;
+let mut runner = CppRunner::new(build_folder.path())?;
 
 let echo = runner.add_program("#include <iostream>\nint main() { int n; std::cin >> n; std::cout << n; }")?;
 let square = runner.add_program("#include <iostream>\nint main() { int n; std::cin >> n; std::cout << n * n; }")?;
 
 let results = runner.check_programs("7", &[echo, square], Limits::new().with_memory_mb(256))?;
-assert_eq!(results[0].output(), Some("7"));
-assert_eq!(results[1].output(), Some("49"));
+assert!(matches!(&results[0], RunResult::Ok { output, .. } if output == "7"));
+assert!(matches!(&results[1], RunResult::Ok { output, .. } if output == "49"));
 
 runner.clean_build_folder()?;
 # Ok::<(), Box<dyn std::error::Error>>(())

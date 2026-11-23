@@ -1,8 +1,12 @@
 use std::time::Duration;
 
+/// The default [`Limits::time_ms`].
 pub const DEFAULT_TIME_MS: u64 = 1000;
+/// The default [`Limits::output_bytes`]: 256 MiB.
 pub const DEFAULT_OUTPUT_BYTES: u64 = 256 << 20;
 
+/// What a single run may use.
+///
 /// ```
 /// use cpprunner::Limits;
 ///
@@ -13,8 +17,12 @@ pub const DEFAULT_OUTPUT_BYTES: u64 = 256 << 20;
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Limits {
+    /// CPU time in milliseconds; zero counts as one. A program that blocks is stopped after twice
+    /// this plus two seconds of wall time.
     pub time_ms: u64,
+    /// Peak memory in kilobytes, or `None` for no limit.
     pub memory_kb: Option<u64>,
+    /// The most bytes a program may write to stdout.
     pub output_bytes: u64,
 }
 
@@ -25,6 +33,7 @@ impl Default for Limits {
 }
 
 impl Limits {
+    /// [`DEFAULT_TIME_MS`], no memory limit and [`DEFAULT_OUTPUT_BYTES`].
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -34,23 +43,27 @@ impl Limits {
         }
     }
 
+    /// Sets [`Limits::time_ms`].
     #[must_use]
     pub const fn with_time_ms(mut self, time_ms: u64) -> Self {
         self.time_ms = time_ms;
         self
     }
 
+    /// Sets [`Limits::memory_kb`].
     #[must_use]
     pub const fn with_memory_kb(mut self, memory_kb: Option<u64>) -> Self {
         self.memory_kb = memory_kb;
         self
     }
 
+    /// Sets [`Limits::memory_kb`] in megabytes.
     #[must_use]
     pub const fn with_memory_mb(self, memory_mb: u64) -> Self {
         self.with_memory_kb(Some(memory_mb.saturating_mul(1024)))
     }
 
+    /// Sets [`Limits::output_bytes`].
     #[must_use]
     pub const fn with_output_bytes(mut self, output_bytes: u64) -> Self {
         self.output_bytes = output_bytes;

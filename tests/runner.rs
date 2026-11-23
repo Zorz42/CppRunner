@@ -1,7 +1,7 @@
 mod common;
 
 use common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, runner};
-use cpprunner::{Compiler, CppRunner, Error, Job, MAX_DEFAULT_WORKERS, RunResult};
+use cpprunner::{CppRunner, Error, Job, MAX_DEFAULT_WORKERS, RunResult};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -12,7 +12,6 @@ const fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn types_are_send_and_sync() {
     assert_send_sync::<CppRunner>();
-    assert_send_sync::<Compiler>();
     assert_send_sync::<Error>();
 }
 
@@ -100,38 +99,6 @@ fn program_hash_is_stable_across_runners() {
     };
     assert_eq!(hash(HELLO_WORLD), hash(HELLO_WORLD));
     assert_ne!(hash(HELLO_WORLD), hash(ECHO));
-    assert_eq!(hash(HELLO_WORLD), Compiler::detect().unwrap().program_hash(HELLO_WORLD));
-}
-
-#[test]
-fn different_flags_share_a_build_folder_without_mixing_up_programs() {
-    let dir = TempDir::new().unwrap();
-    let source = "#include <iostream>\nint main() { std::cout << VALUE; }";
-    let output = |value: u32| {
-        let compiler = Compiler::detect().unwrap().with_arg(&format!("-DVALUE={value}"));
-        let mut runner = CppRunner::with_compiler(dir.path(), compiler).unwrap();
-        let program = runner.add_program(source).unwrap();
-        runner.run(program, "", limits(1000)).unwrap()
-    };
-    assert_output(&output(1), "1");
-    assert_output(&output(2), "2");
-    assert_output(&output(1), "1");
-    assert_eq!(binaries_in(dir.path()).len(), 2);
-}
-
-#[test]
-fn runner_finds_what_compile_cached_compiled() {
-    let dir = TempDir::new().unwrap();
-    let compiler = Compiler::detect().unwrap();
-    let compiled = compiler.compile_cached(dir.path(), HELLO_WORLD).unwrap();
-    let modified = std::fs::metadata(&compiled.executable).unwrap().modified().unwrap();
-
-    let mut runner = CppRunner::with_compiler(dir.path(), compiler).unwrap();
-    let program = runner.add_program(HELLO_WORLD).unwrap();
-
-    assert_eq!(runner.executable(program), compiled.executable);
-    assert_eq!(runner.program_hash(program), compiled.hash);
-    assert_eq!(std::fs::metadata(&compiled.executable).unwrap().modified().unwrap(), modified);
 }
 
 #[test]
@@ -317,7 +284,7 @@ fn jobs_run_in_parallel() {
     let jobs = [Job { program: sleep, input: "" }; 4];
 
     let start = Instant::now();
-    assert!(runner.run_all(&jobs, limits(1000)).unwrap().iter().all(RunResult::is_ok));
+    assert!(runner.run_all(&jobs, limits(1000)).unwrap().iter().all(|result| matches!(result, RunResult::Ok { .. })));
     assert!(start.elapsed() < Duration::from_millis(1500), "took {:?}", start.elapsed());
 }
 

@@ -1,12 +1,21 @@
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+/// Why a program could not be compiled or run. How a program behaved is a
+/// [`RunResult`](crate::RunResult), not an error.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
+    /// A file or folder could not be read, written or created.
     #[error("I/O error on {}: {source}", path.display())]
-    Io { source: std::io::Error, path: PathBuf },
+    Io {
+        /// The underlying error.
+        source: std::io::Error,
+        /// The file or folder it happened on.
+        path: PathBuf,
+    },
 
+    /// No C++ compiler was found.
     #[error(
         "C++ compiler is not found. Make sure to install it first. If it is already installed, \
          specify the path to the compiler with the {} environment variable.",
@@ -14,11 +23,21 @@ pub enum Error {
     )]
     CompilerNotFound,
 
+    /// The compiler rejected the program.
     #[error("Compiler error: {stderr}\n{stdout}")]
-    CompilerError { stderr: String, stdout: String },
+    CompilerError {
+        /// The compiler's diagnostics.
+        stderr: String,
+        /// The compiler's standard output, usually empty.
+        stdout: String,
+    },
 
+    /// A program could not be started or measured, for example because its executable is gone.
     #[error("Could not run a program: {details}")]
-    RunFailed { details: String },
+    RunFailed {
+        /// What went wrong.
+        details: String,
+    },
 }
 
 impl Error {
@@ -31,4 +50,5 @@ impl Error {
     }
 }
 
+/// A result with this crate's [`Error`](enum@Error).
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -1,47 +1,30 @@
+/// How a run ended.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RunResult {
-    Ok { time_ms: u64, memory_kb: u64, output: String },
+    /// Exited with code zero within all limits.
+    Ok {
+        /// CPU time used, in milliseconds.
+        time_ms: u64,
+        /// Peak memory used, in kilobytes.
+        memory_kb: u64,
+        /// Everything written to stdout; invalid UTF-8 is replaced.
+        output: String,
+    },
+    /// Used more CPU time than allowed, or blocked for far too long.
     TimedOut,
+    /// Peak memory went over the limit.
     MemoryLimitExceeded,
+    /// The program failed.
     Crashed(CrashReason),
 }
 
+/// Why a program [crashed](RunResult::Crashed).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CrashReason {
+    /// Exited with a non-zero code. On Windows this includes crashes, as exception codes.
     ExitCode(i32),
+    /// Killed by this signal, such as `SIGSEGV` (Unix only).
     Signal(i32),
+    /// Wrote more than [`Limits::output_bytes`](crate::Limits::output_bytes) to stdout.
     OutputLimitExceeded,
-}
-
-impl RunResult {
-    #[must_use]
-    pub const fn is_ok(&self) -> bool {
-        matches!(self, Self::Ok { .. })
-    }
-
-    #[must_use]
-    pub fn output(&self) -> Option<&str> {
-        match self {
-            Self::Ok { output, .. } => Some(output),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn into_output(self) -> Option<String> {
-        match self {
-            Self::Ok { output, .. } => Some(output),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn verdict(&self) -> &'static str {
-        match self {
-            Self::Ok { .. } => "OK",
-            Self::TimedOut => "TLE",
-            Self::MemoryLimitExceeded => "MLE",
-            Self::Crashed(_) => "RTE",
-        }
-    }
 }

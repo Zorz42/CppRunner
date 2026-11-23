@@ -38,6 +38,13 @@ pub fn run(source: &str, input: &str, time_ms: u64) -> RunResult {
     run_with(source, input, limits(time_ms))
 }
 
+pub fn output(result: &RunResult) -> Option<&str> {
+    match result {
+        RunResult::Ok { output, .. } => Some(output),
+        _ => None,
+    }
+}
+
 pub fn assert_output(result: &RunResult, expected: &str) {
     assert!(matches!(result, RunResult::Ok { output, .. } if output.trim() == expected), "expected {expected:?}, got {result:?}");
 }

@@ -1,5 +1,5 @@
-use crate::compiler::{SCRATCH_PREFIX, canonicalize};
-use crate::{Compiler, Error, Limits, Result, RunResult, run_executable};
+use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize};
+use crate::{Error, Limits, Result, RunResult, run_executable};
 use log::{trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -10,12 +10,16 @@ use std::sync::mpsc;
 /// Kept low so that contention between parallel runs does not change verdicts.
 pub const MAX_DEFAULT_WORKERS: usize = 4;
 
+/// A program added to a [`CppRunner`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProgramHandle(usize);
 
+/// One run of a program on an input.
 #[derive(Clone, Copy, Debug)]
 pub struct Job<'input> {
+    /// The program to run.
     pub program: ProgramHandle,
+    /// What it gets on stdin.
     pub input: &'input str,
 }
 
@@ -27,8 +31,10 @@ impl Drop for StopOnDrop<'_> {
     }
 }
 
+/// Compiles programs into a cached build folder and runs them, in parallel when given several jobs.
+///
 /// ```
-/// use cpprunner::{CppRunner, Job, Limits};
+/// use cpprunner::{CppRunner, Job, Limits, RunResult};
 ///
 /// let build_folder = tempfile::tempdir()?;
 /// let mut runner = CppRunner::new(build_folder.path())?;
@@ -36,7 +42,10 @@ impl Drop for StopOnDrop<'_> {
 ///
 /// let inputs = ["1", "2", "3"];
 /// let jobs: Vec<Job> = inputs.iter().map(|input| Job { program: double, input }).collect();
-/// let outputs: Vec<_> = runner.run_all(&jobs, Limits::default())?.into_iter().map(|result| result.into_output().unwrap()).collect();
+/// let outputs: Vec<_> = runner.run_all(&jobs, Limits::default())?.into_iter().map(|result| match result {
+///     RunResult::Ok { output, .. } => output,
+///     other => panic!("{other:?}"),
+/// }).collect();
 /// assert_eq!(outputs, ["2", "4", "6"]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -51,14 +60,11 @@ pub struct CppRunner {
 }
 
 impl CppRunner {
+    /// Uses `build_folder`, created if missing, and the compiler [`COMPILER_ENV_VAR`](crate::COMPILER_ENV_VAR) names.
     pub fn new(build_folder: &Path) -> Result<Self> {
-        Self::with_compiler(build_folder, Compiler::detect()?)
-    }
-
-    pub fn with_compiler(build_folder: &Path, compiler: Compiler) -> Result<Self> {
         std::fs::create_dir_all(build_folder).map_err(Error::io(build_folder))?;
         Ok(Self {
-            compiler,
+            compiler: Compiler::detect()?,
             build_folder: canonicalize(build_folder)?,
             programs: Vec::new(),
             hashes: Vec::new(),
@@ -68,16 +74,13 @@ impl CppRunner {
         })
     }
 
-    #[must_use]
-    pub const fn compiler(&self) -> &Compiler {
-        &self.compiler
-    }
-
+    /// The build folder, canonicalized.
     #[must_use]
     pub fn build_folder(&self) -> &Path {
         &self.build_folder
     }
 
+    /// Compiles `source_code` unless it is cached. Adding the same source again returns the same handle.
     pub fn add_program(&mut self, source_code: &str) -> Result<ProgramHandle> {
         let hash = self.compiler.program_hash(source_code);
         if let Some(&handle) = self.hash_to_handle.get(&hash) {
@@ -94,55 +97,66 @@ impl CppRunner {
         Ok(handle)
     }
 
+    /// Reads the C++ file at `source` and adds it as [`add_program`](Self::add_program) does.
     pub fn add_file(&mut self, source: &Path) -> Result<ProgramHandle> {
         let source_code = std::fs::read_to_string(source).map_err(Error::io(source))?;
         self.add_program(&source_code)
     }
 
+    /// Identifies the program's source and compiler; stable across runs.
     #[must_use]
     pub fn program_hash(&self, program: ProgramHandle) -> u64 {
         self.hashes[program.0]
     }
 
+    /// The program's executable.
     #[must_use]
     pub fn executable(&self, program: ProgramHandle) -> &Path {
         &self.programs[program.0]
     }
 
+    /// Every added program, in the order added.
     #[must_use]
     pub fn programs(&self) -> Vec<ProgramHandle> {
         (0..self.programs.len()).map(ProgramHandle).collect()
     }
 
+    /// Keeps `file` when [`clean_build_folder`](Self::clean_build_folder) runs.
     pub fn keep(&mut self, file: PathBuf) {
         self.necessary_files.insert(file);
     }
 
+    /// Sets how many jobs run at once; at least one.
     pub fn set_workers(&mut self, workers: usize) {
         self.workers = workers.max(1);
     }
 
+    /// Sets how many jobs run at once, as [`set_workers`](Self::set_workers) does.
     #[must_use]
     pub fn with_workers(mut self, workers: usize) -> Self {
         self.set_workers(workers);
         self
     }
 
+    /// How many jobs run at once.
     #[must_use]
     pub const fn workers(&self) -> usize {
         self.workers
     }
 
+    /// Runs one program on this thread.
     pub fn run(&self, program: ProgramHandle, input: &str, limits: Limits) -> Result<RunResult> {
         let executable = self.programs.get(program.0).ok_or_else(|| Error::run_failed(format!("{program:?} does not belong to this runner")))?;
         run_executable(executable, input, limits)
     }
 
+    /// Runs every program on the same input, returning the results in order.
     pub fn check_programs(&self, input: &str, programs: &[ProgramHandle], limits: Limits) -> Result<Vec<RunResult>> {
         let jobs: Vec<_> = programs.iter().map(|&program| Job { program, input }).collect();
         self.run_all(&jobs, limits)
     }
 
+    /// Runs every job, returning the results in order.
     pub fn run_all(&self, jobs: &[Job], limits: Limits) -> Result<Vec<RunResult>> {
         let mut results = vec![None; jobs.len()];
         self.run_jobs(jobs, limits, &|_job| false, |job, result| results[job] = result)?;

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, run, run_with, run_within};
+use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_with, run_within};
 use cpprunner::{CrashReason, Error, Limits, RunResult, run_executable};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -26,19 +26,19 @@ fn empty_input_is_end_of_file() {
 
 #[test]
 fn empty_output() {
-    assert_eq!(run("int main() {}", "", 1000).output(), Some(""));
+    assert_eq!(output(&run("int main() {}", "", 1000)), Some(""));
 }
 
 #[test]
 fn output_is_exact() {
     let source = "#include <cstdio>\nint main() { std::printf(\"  a\\n\\nb  \\n\"); }";
-    assert_eq!(run(source, "", 1000).output(), Some("  a\n\nb  \n"));
+    assert_eq!(output(&run(source, "", 1000)), Some("  a\n\nb  \n"));
 }
 
 #[test]
 fn invalid_utf8_output_is_replaced() {
     let source = "#include <cstdio>\nint main() { std::printf(\"a\\xff\\xfe b\"); }";
-    assert_eq!(run(source, "", 1000).output(), Some("a\u{fffd}\u{fffd} b"));
+    assert_eq!(output(&run(source, "", 1000)), Some("a\u{fffd}\u{fffd} b"));
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn large_input_and_large_output() {
 #[test]
 fn stderr_is_discarded() {
     let source = "#include <iostream>\nint main() { std::cerr << \"debug 123\\ntrailing\"; std::cout << 42; }";
-    assert_eq!(run(source, "", 1000).output(), Some("42"));
+    assert_eq!(output(&run(source, "", 1000)), Some("42"));
 }
 
 #[test]
@@ -174,16 +174,16 @@ fn runaway_output_is_stopped() {
 fn output_limit_is_exact() {
     let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
     let limits = Limits::new().with_output_bytes(100);
-    assert_eq!(run_with(source, "100", limits).output().map(str::len), Some(100));
+    assert_eq!(output(&run_with(source, "100", limits)).map(str::len), Some(100));
     assert_eq!(run_with(source, "101", limits), RunResult::Crashed(CrashReason::OutputLimitExceeded));
 }
 
 #[test]
 fn output_limit_extremes() {
     let source = "#include <iostream>\n#include <string>\nint main() { int n; std::cin >> n; std::cout << std::string(n, 'x'); }";
-    assert_eq!(run_with(source, "0", Limits::new().with_output_bytes(0)).output(), Some(""));
+    assert_eq!(output(&run_with(source, "0", Limits::new().with_output_bytes(0))), Some(""));
     assert_eq!(run_with(source, "1", Limits::new().with_output_bytes(0)), RunResult::Crashed(CrashReason::OutputLimitExceeded));
-    assert_eq!(run_with(source, "5", Limits::new().with_output_bytes(u64::MAX)).output(), Some("xxxxx"));
+    assert_eq!(output(&run_with(source, "5", Limits::new().with_output_bytes(u64::MAX))), Some("xxxxx"));
 }
 
 #[test]

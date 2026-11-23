@@ -47,7 +47,7 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         Ok(other) => {
-            eprintln!("{}", other.verdict());
+            eprintln!("{other:?}");
             ExitCode::FAILURE
         }
         Err(err) => {

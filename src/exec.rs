@@ -24,12 +24,13 @@ pub fn poll_interval(elapsed: Duration) -> Duration {
     (elapsed / 8).clamp(Duration::from_micros(50), Duration::from_millis(2))
 }
 
-fn read_output<R: Read>(stdout: R, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+pub fn read_output<R: Read>(stdout: R, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut output = Vec::new();
     stdout.take(max_bytes.saturating_add(1)).read_to_end(&mut output)?;
     Ok((output.len() as u64 <= max_bytes).then_some(output))
 }
 
+/// Runs an already compiled executable under `limits` with `input` on stdin; its stderr is discarded.
 pub fn run_executable(executable: &Path, input: &str, limits: Limits) -> Result<RunResult> {
     let mut command = Command::new(executable);
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
