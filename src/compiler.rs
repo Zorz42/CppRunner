@@ -9,7 +9,6 @@ use std::sync::OnceLock;
 /// Names the C++ compiler to use, as a path or a program on `PATH`. If unset, the first of `g++`,
 /// `c++` and `clang++` found is used.
 pub const COMPILER_ENV_VAR: &str = "GCC_PATH";
-
 pub const SCRATCH_PREFIX: &str = ".scratch-";
 
 pub fn canonicalize(path: &Path) -> Result<PathBuf> {

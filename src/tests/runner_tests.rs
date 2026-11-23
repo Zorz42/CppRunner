@@ -1,6 +1,5 @@
 use crate::cache::MAX_CACHED_OUTPUT_BYTES;
-use crate::runner::MAX_DEFAULT_WORKERS;
-use crate::tests::common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, run_on, runner, runs_logged};
+use crate::tests::common::{ECHO, HELLO_WORLD, assert_output, binaries_in, files_in, limits, logging_echo, precompile, run_on, runner, runs_logged};
 use crate::{Error, Limits, RunHandle, RunResult, Runner};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -28,17 +27,16 @@ fn run_program() {
 fn compile_error() {
     let (_dir, runner) = runner();
     let faulty = "int main() { compile error here }";
-    assert!(matches!(runner.compile(faulty), Err(Error::CompilerError { .. })));
     assert!(matches!(run_on(&runner, faulty, "", limits(1000)), Err(Error::CompilerError { .. })));
     assert!(matches!(runner.spawn(faulty, "", limits(1000)), Err(Error::CompilerError { .. })));
 }
 
 #[test]
-fn compile_then_run() {
+fn a_program_is_compiled_when_first_run() {
     let (dir, runner) = runner();
-    runner.compile(ECHO).unwrap();
-    assert_eq!(binaries_in(dir.path()).len(), 1);
+    assert_eq!(binaries_in(dir.path()).len(), 0);
     assert_output(&run_on(&runner, ECHO, "5", limits(1000)).unwrap(), "5");
+    assert_output(&run_on(&runner, ECHO, "6", limits(1000)).unwrap(), "6");
     assert_eq!(binaries_in(dir.path()).len(), 1);
 }
 
@@ -65,9 +63,9 @@ fn same_program_is_compiled_once() {
     let (dir, runner) = runner();
     let start = Instant::now();
     for _ in 0..100 {
-        runner.compile(HELLO_WORLD).unwrap();
+        run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap();
     }
-    assert_eq!(files_in(dir.path()).len(), 2);
+    assert_eq!(binaries_in(dir.path()).len(), 1);
     assert!(start.elapsed() < Duration::from_secs(10), "took {:?}", start.elapsed());
 }
 
@@ -129,7 +127,8 @@ fn compiled_programs_are_picked_up_by_new_runners() {
 #[test]
 fn missing_binary_is_an_error_not_a_crash() {
     let (dir, runner) = runner();
-    runner.compile(HELLO_WORLD).unwrap();
+    runner.set_result_cache(false);
+    run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap();
     std::fs::remove_file(&binaries_in(dir.path())[0]).unwrap();
 
     let result = run_on(&runner, HELLO_WORLD, "", limits(1000));
@@ -163,20 +162,17 @@ fn results_come_back_whatever_the_number_of_workers() {
 }
 
 #[test]
-fn workers() {
+fn zero_workers_count_as_one() {
     let (_dir, runner) = runner();
-    assert!((1..=MAX_DEFAULT_WORKERS).contains(&runner.workers()));
-    runner.set_workers(7);
-    assert_eq!(runner.workers(), 7);
     runner.set_workers(0);
-    assert_eq!(runner.workers(), 1);
+    assert_output(&run_on(&runner, ECHO, "5", limits(1000)).unwrap(), "5");
 }
 
 #[test]
 fn runs_go_in_parallel() {
-    let (_dir, runner) = runner();
+    let (dir, runner) = runner();
     runner.set_workers(4);
-    runner.compile(SLEEP_300_MS).unwrap();
+    precompile(dir.path(), SLEEP_300_MS);
     let start = Instant::now();
     let handles: Vec<_> = (0..4).map(|i| runner.spawn(SLEEP_300_MS, i.to_string(), limits(1000)).unwrap()).collect();
     for handle in handles {
@@ -224,7 +220,7 @@ fn cancelled_runs_do_not_start() {
     runner.set_workers(1);
     let log = dir.path().join("log");
     let program = logging_echo(&log);
-    runner.compile(&program).unwrap();
+    precompile(dir.path(), &program);
 
     let blocker = runner.spawn(SLEEP_300_MS, "blocker", limits(1000)).unwrap();
     let handles: Vec<_> = (0..6).map(|i| runner.spawn(&program, i.to_string(), limits(1000)).unwrap()).collect();
@@ -250,7 +246,7 @@ fn dropped_handles_cancel_their_runs() {
     runner.set_workers(1);
     let log = dir.path().join("log");
     let program = logging_echo(&log);
-    runner.compile(&program).unwrap();
+    precompile(dir.path(), &program);
 
     let blocker = runner.spawn(SLEEP_300_MS, "blocker", limits(1000)).unwrap();
     drop(runner.spawn(&program, "dropped", limits(1000)).unwrap());
@@ -379,19 +375,6 @@ fn cache_is_keyed_by_program() {
 }
 
 #[test]
-fn spawn_fresh_ignores_the_cache_and_updates_it() {
-    let (dir, runner) = runner();
-    let log = dir.path().join("log");
-    let program = logging_echo(&log);
-
-    run_on(&runner, &program, "a", limits(1000)).unwrap();
-    runner.spawn_fresh(&program, "a", limits(1000)).unwrap().wait().unwrap();
-    run_on(&runner, &program, "a", limits(1000)).unwrap();
-
-    assert_eq!(runs_logged(&log).len(), 2);
-}
-
-#[test]
 fn result_cache_can_be_turned_off() {
     let (dir, runner) = runner();
     let log = dir.path().join("log");
@@ -427,38 +410,4 @@ fn damaged_cache_file_is_ignored() {
     let (dir, runner) = runner();
     std::fs::write(dir.path().join("results.cache"), "garbage\n0 1 2\n\u{0}\u{1}\nffff ffff 1 - 1 OK 1 1 -zz\n").unwrap();
     assert_output(&run_on(&runner, ECHO, "9", limits(1000)).unwrap(), "9");
-}
-
-#[test]
-fn clean_build_folder_keeps_compiled_programs_and_the_cache() {
-    let (dir, runner) = runner();
-    run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap();
-    let stray = dir.path().join("stray.txt");
-    std::fs::write(&stray, "junk").unwrap();
-    let scratch = dir.path().join(".scratch-abc");
-    std::fs::create_dir_all(&scratch).unwrap();
-    std::fs::write(scratch.join("p1.cpp"), "junk").unwrap();
-    let other_folder = dir.path().join("subfolder");
-    std::fs::create_dir_all(&other_folder).unwrap();
-
-    runner.clean_build_folder().unwrap();
-
-    assert!(!stray.exists());
-    assert!(!scratch.exists());
-    assert!(other_folder.exists());
-    assert!(dir.path().join("results.cache").exists());
-    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
-}
-
-#[test]
-fn clean_build_folder_removes_programs_of_other_runners() {
-    let dir = TempDir::new().unwrap();
-    Runner::new(dir.path()).unwrap().compile(ECHO).unwrap();
-
-    let runner = Runner::new(dir.path()).unwrap();
-    runner.compile(HELLO_WORLD).unwrap();
-    runner.clean_build_folder().unwrap();
-
-    assert_eq!(files_in(dir.path()).len(), 2);
-    assert_output(&run_on(&runner, HELLO_WORLD, "", limits(1000)).unwrap(), "Hello, World!");
 }

@@ -1,4 +1,5 @@
 use crate::hash::stable_hash;
+use crate::result::improves_on;
 use crate::{Limits, RunResult};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -44,19 +45,11 @@ pub enum Entry {
 }
 
 impl Entry {
-    const fn passed_in_ms(&self) -> Option<u64> {
-        match self {
-            Self::Run(RunResult::Ok { time_ms, .. }) | Self::Checked(RunResult::Ok { time_ms, output: true, .. }) => Some(*time_ms),
-            _ => None,
-        }
-    }
-
-    /// A pass beats a failure, and a faster pass a slower one.
-    pub const fn improves_on(&self, other: &Self) -> bool {
-        match (self.passed_in_ms(), other.passed_in_ms()) {
-            (Some(time_ms), Some(other_ms)) => time_ms < other_ms,
-            (Some(_), None) => true,
-            (None, _) => false,
+    fn improves_on(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Run(result), Self::Run(other)) => improves_on(result, other),
+            (Self::Checked(result), Self::Checked(other)) => improves_on(result, other),
+            _ => true,
         }
     }
 }

@@ -140,8 +140,8 @@ fn runner_reuses_what_another_compiled() {
     let compiled = Compiler::detect().unwrap().compile_cached(&canonicalize(dir.path()).unwrap(), HELLO_WORLD).unwrap();
     let modified = std::fs::metadata(&compiled.executable).unwrap().modified().unwrap();
 
-    Runner::new(dir.path()).unwrap().compile(HELLO_WORLD).unwrap();
+    Runner::new(dir.path()).unwrap().spawn(HELLO_WORLD, "", crate::Limits::default()).unwrap().wait().unwrap();
 
     assert_eq!(std::fs::metadata(&compiled.executable).unwrap().modified().unwrap(), modified);
-    assert_eq!(files_in(dir.path()).len(), 2);
+    assert_eq!(files_in(dir.path()).into_iter().filter(|file| !file.ends_with("results.cache")).count(), 2);
 }

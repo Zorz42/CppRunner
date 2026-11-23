@@ -24,3 +24,41 @@ pub enum RunResult<T = String> {
     /// Wrote more than [`Limits::output_bytes`](crate::Limits::output_bytes) to stdout.
     OutputLimitExceeded,
 }
+
+/// What a successful run gives: a plain run's output always passes, a checked run's only if accepted.
+pub trait Output {
+    fn passed(&self) -> bool;
+}
+
+impl Output for String {
+    fn passed(&self) -> bool {
+        true
+    }
+}
+
+impl Output for bool {
+    fn passed(&self) -> bool {
+        *self
+    }
+}
+
+fn passed_in_ms<O: Output>(result: &RunResult<O>) -> Option<u64> {
+    match result {
+        RunResult::Ok { time_ms, output, .. } if output.passed() => Some(*time_ms),
+        _ => None,
+    }
+}
+
+/// A pass beats a failure, and a faster pass a slower one.
+pub fn improves_on<O: Output>(result: &RunResult<O>, other: &RunResult<O>) -> bool {
+    match (passed_in_ms(result), passed_in_ms(other)) {
+        (Some(time_ms), Some(other_ms)) => time_ms < other_ms,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
+/// Whether timing noise could change the result: it timed out, or passed using over half of `time_ms`.
+pub fn near_the_limit<O: Output>(result: &RunResult<O>, time_ms: u64) -> bool {
+    matches!(result, RunResult::TimedOut) || passed_in_ms(result).is_some_and(|used| used * 2 > time_ms)
+}

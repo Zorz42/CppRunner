@@ -2,9 +2,10 @@ use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
 use crate::check::{accepts, check_hash, checked, tokens_match};
 use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize, is_program_source};
 use crate::exec::run_executable;
+use crate::result::{Output, improves_on, near_the_limit};
 use crate::{Check, Error, Limits, Result, RunResult};
 use log::{debug, warn};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -16,8 +17,8 @@ use std::time::{Duration, SystemTime};
 /// contention between parallel runs does not change verdicts.
 pub const MAX_DEFAULT_WORKERS: usize = 4;
 
-/// A compiled program not used for this long is removed when a runner is dropped.
-pub const UNUSED_PROGRAM_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// A compiled program or scratch folder not used for this long is removed when a runner is dropped.
+pub const UNUSED_FILE_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -34,6 +35,19 @@ fn mark_used(source: &Path) {
 
 fn unused_for(path: &Path) -> Option<Duration> {
     SystemTime::now().duration_since(path.metadata().ok()?.modified().ok()?).ok()
+}
+
+fn best_of<O: Output, F: FnMut() -> Result<RunResult<O>>>(retries: usize, limits: Limits, mut run: F) -> Result<RunResult<O>> {
+    let mut best = run()?;
+    if near_the_limit(&best, limits.effective_time_ms()) {
+        for _ in 0..retries {
+            let again = run()?;
+            if improves_on(&again, &best) {
+                best = again;
+            }
+        }
+    }
+    Ok(best)
 }
 
 struct Task {
@@ -151,8 +165,8 @@ pub struct Runner {
     compiler: Compiler,
     build_folder: PathBuf,
     caching: AtomicBool,
+    timing_retries: AtomicUsize,
     executables: Mutex<HashMap<u64, Arc<Path>>>,
-    kept: Mutex<HashSet<PathBuf>>,
     shared: Arc<Shared>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -166,8 +180,8 @@ impl Runner {
         Ok(Self {
             compiler: Compiler::detect()?,
             caching: AtomicBool::new(true),
+            timing_retries: AtomicUsize::new(0),
             executables: Mutex::new(HashMap::new()),
-            kept: Mutex::new(HashSet::from([build_folder.join(CACHE_FILE)])),
             shared: Arc::new(Shared {
                 queue: Mutex::new(Queue::default()),
                 work: Condvar::new(),
@@ -177,12 +191,6 @@ impl Runner {
             threads: Mutex::new(Vec::new()),
             build_folder,
         })
-    }
-
-    /// How many programs run at once.
-    #[must_use]
-    pub fn workers(&self) -> usize {
-        self.shared.workers.load(Ordering::Relaxed)
     }
 
     /// Sets how many programs run at once; at least one.
@@ -199,10 +207,10 @@ impl Runner {
         self.caching.store(enabled, Ordering::Relaxed);
     }
 
-    /// Compiles `source_code` unless it is compiled already. Running a program compiles it too; this
-    /// only reports compile errors sooner.
-    pub fn compile(&self, source_code: &str) -> Result<()> {
-        self.executable(source_code).map(drop)
+    /// How many more times a run is measured when it timed out or used over half its time limit, as
+    /// timing varies between runs. The best measurement counts and is cached. None by default.
+    pub fn set_timing_retries(&self, retries: usize) {
+        self.timing_retries.store(retries, Ordering::Relaxed);
     }
 
     fn executable(&self, source_code: &str) -> Result<(u64, Arc<Path>)> {
@@ -212,8 +220,6 @@ impl Runner {
         }
         let compiled = self.compiler.compile_cached(&self.build_folder, source_code)?;
         mark_used(&compiled.source);
-        self.keep(compiled.source);
-        self.keep(compiled.executable.clone());
         let executable: Arc<Path> = compiled.executable.into();
         lock(&self.executables).insert(hash, executable.clone());
         Ok((hash, executable))
@@ -222,23 +228,13 @@ impl Runner {
     /// Queues a run of `source_code` on `input`, compiling it first if needed. Runs start in the
     /// order they are queued. A cached result is returned without running the program.
     pub fn spawn<I: Into<Arc<str>>>(&self, source_code: &str, input: I, limits: Limits) -> Result<RunHandle> {
-        self.queue_run(source_code, input.into(), limits, true)
-    }
-
-    /// As [`spawn`](Self::spawn), but never uses a cached result, to measure the program again.
-    pub fn spawn_fresh<I: Into<Arc<str>>>(&self, source_code: &str, input: I, limits: Limits) -> Result<RunHandle> {
-        self.queue_run(source_code, input.into(), limits, false)
+        self.queue_run(source_code, input.into(), limits)
     }
 
     /// As [`spawn`](Self::spawn), but the output is checked against `answer`, and only whether it
     /// was accepted is kept. That is small, so checked runs are always cached.
     pub fn spawn_checked<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
-        self.queue_checked(source_code, input.into(), answer.into(), check, limits, true)
-    }
-
-    /// As [`spawn_checked`](Self::spawn_checked), but never uses a cached result.
-    pub fn spawn_checked_fresh<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
-        self.queue_checked(source_code, input.into(), answer.into(), check, limits, false)
+        self.queue_checked(source_code, input.into(), answer.into(), check, limits)
     }
 
     /// Queues checking `output` against `answer`: whether `check` accepts it. Only a checker program
@@ -263,14 +259,15 @@ impl Runner {
         }
     }
 
-    fn queue_run(&self, source_code: &str, input: Arc<str>, limits: Limits, use_cached: bool) -> Result<RunHandle> {
+    fn queue_run(&self, source_code: &str, input: Arc<str>, limits: Limits) -> Result<RunHandle> {
         let (hash, executable) = self.executable(source_code)?;
         let key = self.caching().then(|| Key::new(hash, &input, limits));
-        if use_cached && let Some(Entry::Run(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
+        if let Some(Entry::Run(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
             return Ok(RunHandle::finished(cached, true));
         }
+        let retries = self.timing_retries.load(Ordering::Relaxed);
         self.queue(move |cache| {
-            let result = run_executable(&executable, &[], &input, limits)?;
+            let result = best_of(retries, limits, || run_executable(&executable, &[], &input, limits))?;
             if let Some(key) = key {
                 cache.insert_run(key, &result);
             }
@@ -278,20 +275,21 @@ impl Runner {
         })
     }
 
-    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits, use_cached: bool) -> Result<RunHandle<RunResult<bool>>> {
+    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits) -> Result<RunHandle<RunResult<bool>>> {
         let (hash, executable) = self.executable(source_code)?;
         let checker = self.checker(check)?;
         let key = self
             .caching()
             .then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map_or(0, |&(hash, _)| hash), &answer), limits));
-        if use_cached && let Some(Entry::Checked(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
+        if let Some(Entry::Checked(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
             return Ok(RunHandle::finished(cached, true));
         }
         let build_folder = self.build_folder.clone();
+        let retries = self.timing_retries.load(Ordering::Relaxed);
         self.queue(move |cache| {
             let checker = checker.as_ref().map(|(_, checker)| &**checker);
-            let result = run_executable(&executable, &[], &input, limits)?;
-            let checked = checked(result, |output| accepts(checker, &build_folder, &input, &answer, output))?;
+            let run = || checked(run_executable(&executable, &[], &input, limits)?, |output| accepts(checker, &build_folder, &input, &answer, output));
+            let checked = best_of(retries, limits, run)?;
             if let Some(key) = key {
                 cache.insert_checked(key, checked);
             }
@@ -311,7 +309,7 @@ impl Runner {
             cancelled: cancelled.clone(),
             job: Box::new(job),
         });
-        if queue.threads < self.workers() {
+        if queue.threads < self.shared.workers.load(Ordering::Relaxed) {
             let shared = self.shared.clone();
             match std::thread::Builder::new().name("cpprunner-worker".to_owned()).spawn(move || shared.work()) {
                 Ok(thread) => {
@@ -330,48 +328,29 @@ impl Runner {
         Ok(RunHandle { receiver, cancelled, cached: false })
     }
 
-    /// The executable goes first, so that a program still running elsewhere keeps its source and is
-    /// tried again next time.
-    fn remove_unused_programs(&self) {
+    /// A program's executable goes before its source, so that one still running elsewhere keeps its
+    /// source and is tried again next time. A scratch folder that old belongs to no live compile.
+    fn remove_unused_files(&self) {
         let Ok(entries) = std::fs::read_dir(&self.build_folder) else { return };
-        let kept = lock(&self.kept).clone();
-        for source in entries.filter_map(|entry| Some(entry.ok()?.path())) {
-            if !is_program_source(&source) || kept.contains(&source) || unused_for(&source).is_none_or(|unused| unused < UNUSED_PROGRAM_LIFETIME) {
+        for path in entries.filter_map(|entry| Some(entry.ok()?.path())) {
+            if unused_for(&path).is_none_or(|unused| unused < UNUSED_FILE_LIFETIME) {
                 continue;
             }
-            debug!("Removing {}, unused for over a week", source.display());
-            let removed = match std::fs::remove_file(Compiler::executable_path(&source)) {
-                Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
-                _ => std::fs::remove_file(&source),
-            };
-            if let Err(err) = removed {
-                warn!("Could not remove the unused program {}: {err}", source.display());
-            }
-        }
-    }
-
-    fn keep(&self, file: PathBuf) {
-        lock(&self.kept).insert(file);
-    }
-
-    /// Removes every file of the build folder that belongs to no program this runner compiled, except
-    /// the result cache.
-    pub fn clean_build_folder(&self) -> Result<()> {
-        let kept = lock(&self.kept).clone();
-        for entry in std::fs::read_dir(&self.build_folder).map_err(Error::io(&self.build_folder))? {
-            let path = entry.map_err(Error::io(&self.build_folder))?.path();
-            let removed = if path.is_file() && !kept.contains(&path) {
-                std::fs::remove_file(&path)
+            let removed = if is_program_source(&path) {
+                match std::fs::remove_file(Compiler::executable_path(&path)) {
+                    Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+                    _ => std::fs::remove_file(&path),
+                }
             } else if path.is_dir() && path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(SCRATCH_PREFIX)) {
                 std::fs::remove_dir_all(&path)
             } else {
                 continue;
             };
-            if let Err(err) = removed {
-                warn!("Could not remove {} from the build folder: {err}", path.display());
+            match removed {
+                Ok(()) => debug!("Removed {}, unused for over a week", path.display()),
+                Err(err) => warn!("Could not remove {} from the build folder: {err}", path.display()),
             }
         }
-        Ok(())
     }
 }
 
@@ -387,6 +366,6 @@ impl Drop for Runner {
         for thread in lock(&self.threads).drain(..) {
             let _ = thread.join();
         }
-        self.remove_unused_programs();
+        self.remove_unused_files();
     }
 }

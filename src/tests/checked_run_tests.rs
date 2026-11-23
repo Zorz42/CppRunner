@@ -1,4 +1,4 @@
-use crate::tests::common::{ECHO, logging_echo, runner, runs_logged};
+use crate::tests::common::{ECHO, logging_echo, precompile, runner, runs_logged};
 use crate::{Check, Error, Limits, RunResult, Runner};
 
 /// Accepts any output that is a number at least the input, whatever the answer.
@@ -106,18 +106,6 @@ fn the_cache_key_holds_the_answer_and_the_checker() {
 }
 
 #[test]
-fn fresh_checked_runs_run_again() {
-    let (dir, runner) = runner();
-    let log = dir.path().join("log");
-    let program = logging_echo(&log);
-    checked(&runner, &program, "a", "a", &Check::Tokens).unwrap();
-    let fresh = runner.spawn_checked_fresh(&program, "a", "a", &Check::Tokens, Limits::default()).unwrap();
-    assert!(!fresh.is_cached());
-    assert!(accepted(&fresh.wait().unwrap()));
-    assert_eq!(runs_logged(&log), ["a", "a"]);
-}
-
-#[test]
 fn checked_runs_are_not_cached_when_caching_is_off() {
     let (dir, runner) = runner();
     runner.set_result_cache(false);
@@ -211,9 +199,9 @@ fn outputs_can_be_checked_alone() {
 
 #[test]
 fn checked_runs_can_be_cancelled() {
-    let (_dir, runner) = runner();
+    let (dir, runner) = runner();
     runner.set_workers(1);
-    runner.compile(ECHO).unwrap();
+    precompile(dir.path(), ECHO);
     let limits = Limits::new().with_time_ms(300);
     let busy = runner.spawn_checked("int main() { while (true) {} }", "", "", &Check::Tokens, limits).unwrap();
     let queued = runner.spawn_checked(ECHO, "1", "1", &Check::Tokens, Limits::default()).unwrap();

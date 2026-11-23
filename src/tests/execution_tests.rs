@@ -1,17 +1,10 @@
-use crate::tests::common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_on, run_with, run_within};
+use crate::tests::common::{ALLOCATE, CPU_MS, ECHO, HELLO_WORLD, assert_output, output, run, run_on, run_with, run_within};
 use crate::{Limits, RunResult};
 use std::time::{Duration, Instant};
 
-// MinGW's clock() measures wall time, which a loaded machine stretches.
-const BUSY_LOOP_MS: &str = "#include <iostream>
-#ifdef _WIN32
-#include <windows.h>
-static long long cpu_ms() { FILETIME c, e, k, u; GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u); return ((long long)k.dwHighDateTime << 32 | k.dwLowDateTime) / 10000 + ((long long)u.dwHighDateTime << 32 | u.dwLowDateTime) / 10000; }
-#else
-#include <ctime>
-static long long cpu_ms() { return std::clock() * 1000LL / CLOCKS_PER_SEC; }
-#endif
-int main() { long long ms; std::cin >> ms; while (cpu_ms() < ms) {} std::cout << \"done\"; }";
+fn busy_loop() -> String {
+    format!("#include <iostream>\n{CPU_MS}\nint main() {{ long long ms; std::cin >> ms; while (cpu_ms() < ms) {{}} std::cout << \"done\"; }}")
+}
 
 #[test]
 fn hello_world() {
@@ -61,13 +54,13 @@ fn infinite_loop_is_stopped_soon_after_the_limit() {
 #[test]
 fn over_a_sub_second_limit_is_a_timeout() {
     let (_dir, runner) = crate::tests::common::runner();
-    assert_eq!(run_on(&runner, BUSY_LOOP_MS, "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
-    assert_output(&run_on(&runner, BUSY_LOOP_MS, "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
+    assert_eq!(run_on(&runner, &busy_loop(), "400", Limits::new().with_time_ms(100)).unwrap(), RunResult::TimedOut);
+    assert_output(&run_on(&runner, &busy_loop(), "400", Limits::new().with_time_ms(5000)).unwrap(), "done");
 }
 
 #[test]
 fn cpu_time_is_measured() {
-    let RunResult::Ok { time_ms, .. } = run(BUSY_LOOP_MS, "300", 5000) else { unreachable!() };
+    let RunResult::Ok { time_ms, .. } = run(&busy_loop(), "300", 5000) else { unreachable!() };
     assert!((200..3000).contains(&time_ms), "a 300 ms busy loop was measured at {time_ms} ms");
 
     let RunResult::Ok { time_ms, .. } = run(HELLO_WORLD, "", 5000) else { unreachable!() };

@@ -11,3 +11,4 @@ mod layout_tests;
 mod limits_tests;
 mod program_lifetime_tests;
 mod runner_tests;
+mod timing_retry_tests;

@@ -32,8 +32,10 @@ match runner.spawn(sum, "1 2", limits)?.wait()? {
   `Check::Program` runs a C++ checker as `checker input output answer`, which exits with 0 to accept
   and 1 or 2 to reject, as testlib checkers do. `spawn_check` checks an output alone.
 - Checked runs, time outs, memory limits, crashes and outputs of at most 64 bytes are cached in the
-  build folder; of two results of the same run, the better is kept. `spawn_fresh` and
-  `spawn_checked_fresh` run again regardless, and `set_result_cache(false)` turns caching off.
+  build folder; of two results of the same run, the better is kept. `set_result_cache(false)` turns
+  caching off.
+- `set_timing_retries(n)` measures a run `n` more times when it timed out or used over half its time
+  limit, and keeps the best measurement.
 - Programs get a large stack for deep recursion: 512 MiB on Windows and macOS, and the system's
   maximum on Linux. On macOS memory is not capped while running, so a program over its
   limit is only reported as `MemoryLimitExceeded` once it finishes.

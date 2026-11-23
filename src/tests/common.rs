@@ -1,3 +1,4 @@
+use crate::compiler::{Compiler, canonicalize};
 use crate::{Limits, RunResult, Runner};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -7,6 +8,15 @@ pub const HELLO_WORLD: &str = "#include <iostream>\nint main() { std::cout << \"
 pub const ECHO: &str = "#include <iostream>\nint main() { long long n; std::cin >> n; std::cout << n; }";
 pub const ALLOCATE: &str = "#include <iostream>\n#include <vector>
     int main() { size_t megabytes; std::cin >> megabytes; std::vector<char> memory(megabytes << 20, 1); long long sum = 0; for (char byte : memory) sum += byte; std::cout << sum; }";
+
+// MinGW's clock() measures wall time, which a loaded machine stretches.
+pub const CPU_MS: &str = "#ifdef _WIN32
+#include <windows.h>
+static long long cpu_ms() { FILETIME c, e, k, u; GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u); return ((long long)k.dwHighDateTime << 32 | k.dwLowDateTime) / 10000 + ((long long)u.dwHighDateTime << 32 | u.dwLowDateTime) / 10000; }
+#else
+#include <ctime>
+static long long cpu_ms() { return std::clock() * 1000LL / CLOCKS_PER_SEC; }
+#endif";
 
 pub fn run_within<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(timeout: Duration, what: &str, body: F) -> T {
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -74,4 +84,10 @@ pub fn logging_echo(log: &Path) -> String {
 
 pub fn runs_logged(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log).unwrap_or_default().lines().map(str::to_owned).collect()
+}
+
+/// Compiles `source_code` into `build_folder` before a runner first uses it, so that compiling does
+/// not count towards a test's timing.
+pub fn precompile(build_folder: &Path, source_code: &str) {
+    Compiler::detect().unwrap().compile_cached(&canonicalize(build_folder).unwrap(), source_code).unwrap();
 }

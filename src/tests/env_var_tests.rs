@@ -31,7 +31,7 @@ fn runner_in_child() {
         println!("no compiler");
         return;
     }
-    runner.unwrap().compile("int main() {}").unwrap();
+    runner.unwrap().spawn("int main() {}", "", crate::Limits::default()).unwrap().wait().unwrap();
     println!("compiler found");
 }
 
