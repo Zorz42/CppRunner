@@ -19,12 +19,12 @@ jobs:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - run: rustup toolchain install stable --profile minimal --component clippy
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.7.3
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Set up MinGW
         if: runner.os == 'Windows'
@@ -53,12 +53,12 @@ jobs:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - run: rustup toolchain install 1.88 --profile minimal
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.7.3
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Check on the minimum supported Rust version
         run: cargo +1.88 check --all-targets --locked
@@ -67,6 +67,6 @@ jobs:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt
       - run: cargo fmt --all --check
