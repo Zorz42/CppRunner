@@ -26,6 +26,7 @@ xxhash-rust = { version = "0.8.21", default-features = false, features = ["xxh3"
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", default-features = false }
+nix = { version = "0.32", default-features = false, features = ["process", "resource", "signal"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", default-features = false, features = [

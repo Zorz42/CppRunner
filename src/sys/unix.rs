@@ -1,51 +1,48 @@
 use crate::exec::{Exit, Usage, poll_interval};
 use crate::{CrashReason, Limits};
+use nix::errno::Errno;
+use nix::sys::resource::{Resource, getrlimit, setrlimit};
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
 use std::io;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, ExitStatus};
 use std::time::Instant;
 
 pub fn limit(command: &mut Command, limits: Limits) {
-    let cpu_seconds = limits.cpu_seconds() as libc::rlim_t;
+    let cpu_seconds = limits.cpu_seconds();
     let memory_cap = if cfg!(target_os = "linux") { limits.memory_cap_bytes() } else { None };
     #[cfg(target_os = "linux")]
-    let parent = std::process::id() as libc::pid_t;
+    let parent = nix::unistd::getpid();
 
+    let raise = |resource, cap: Option<u64>| {
+        if let Ok((soft, hard)) = getrlimit(resource) {
+            let wanted = cap.map_or(hard, |cap| cap.min(hard));
+            if soft != wanted {
+                let _ = setrlimit(resource, wanted, hard);
+            }
+        }
+    };
+    // Only async-signal-safe calls between fork and exec.
     unsafe {
         command.pre_exec(move || {
             #[cfg(target_os = "linux")]
             {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
-                if libc::getppid() != parent {
-                    return Err(io::Error::from_raw_os_error(libc::ESRCH));
+                let _ = nix::sys::prctl::set_pdeathsig(Signal::SIGKILL);
+                if nix::unistd::getppid() != parent {
+                    return Err(Errno::ESRCH.into());
                 }
             }
-
-            let cpu = libc::rlimit {
-                rlim_cur: cpu_seconds,
-                rlim_max: cpu_seconds + 5,
-            };
-            libc::setrlimit(libc::RLIMIT_CPU, &raw const cpu);
-
-            let raise = |resource, cap: Option<u64>| {
-                let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-                if libc::getrlimit(resource, &raw mut limit) == 0 {
-                    let wanted = cap.map_or(limit.rlim_max, |cap| (cap as libc::rlim_t).min(limit.rlim_max));
-                    if limit.rlim_cur != wanted {
-                        limit.rlim_cur = wanted;
-                        libc::setrlimit(resource, &raw const limit);
-                    }
-                }
-            };
-            raise(libc::RLIMIT_STACK, None);
-            raise(libc::RLIMIT_AS, memory_cap);
+            let _ = setrlimit(Resource::RLIMIT_CPU, cpu_seconds, cpu_seconds + 5);
+            raise(Resource::RLIMIT_STACK, None);
+            raise(Resource::RLIMIT_AS, memory_cap);
             Ok(())
         });
     }
 }
 
 pub fn is_out_of_memory(err: &io::Error) -> bool {
-    err.raw_os_error() == Some(libc::ENOMEM)
+    err.raw_os_error() == Some(Errno::ENOMEM as i32)
 }
 
 #[allow(clippy::needless_pass_by_ref_mut, reason = "the Windows version needs it")]
@@ -57,9 +54,7 @@ pub fn wait(program: &mut Child, _limits: Limits, deadline: Instant) -> io::Resu
             return Ok(usage);
         }
         if Instant::now() >= deadline {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
+            let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
             return wait4(pid, 0)?.ok_or_else(|| io::Error::other("the program was killed but did not end"));
         }
         std::thread::sleep(poll_interval(start.elapsed()));
@@ -81,7 +76,7 @@ fn wait4(pid: libc::pid_t, options: libc::c_int) -> io::Result<Option<Usage>> {
     let status = ExitStatus::from_raw(status);
     let exit = match (status.code(), status.signal()) {
         (Some(0), _) => Exit::Success,
-        (_, Some(libc::SIGXCPU | libc::SIGKILL)) => Exit::OutOfTime,
+        (_, Some(signal)) if signal == Signal::SIGXCPU as i32 || signal == Signal::SIGKILL as i32 => Exit::OutOfTime,
         (_, Some(signal)) => Exit::Failure(CrashReason::Signal(signal)),
         (Some(code), None) => Exit::Failure(CrashReason::ExitCode(code)),
         (None, None) => Exit::Failure(CrashReason::ExitCode(-1)),
