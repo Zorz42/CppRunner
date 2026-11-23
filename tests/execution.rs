@@ -4,8 +4,16 @@ use common::{ALLOCATE, ECHO, HELLO_WORLD, assert_output, output, run, run_with, 
 use cpprunner::{CrashReason, Limits, RunResult};
 use std::time::{Duration, Instant};
 
-const BUSY_LOOP_MS: &str = "#include <ctime>\n#include <iostream>
-    int main() { long ms; std::cin >> ms; while (std::clock() < ms * (CLOCKS_PER_SEC / 1000)) {} std::cout << \"done\"; }";
+// MinGW's clock() measures wall time, which a loaded machine stretches.
+const BUSY_LOOP_MS: &str = "#include <iostream>
+#ifdef _WIN32
+#include <windows.h>
+static long long cpu_ms() { FILETIME c, e, k, u; GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u); return ((long long)k.dwHighDateTime << 32 | k.dwLowDateTime) / 10000 + ((long long)u.dwHighDateTime << 32 | u.dwLowDateTime) / 10000; }
+#else
+#include <ctime>
+static long long cpu_ms() { return std::clock() * 1000LL / CLOCKS_PER_SEC; }
+#endif
+int main() { long long ms; std::cin >> ms; while (cpu_ms() < ms) {} std::cout << \"done\"; }";
 
 #[test]
 fn hello_world() {
