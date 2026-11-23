@@ -1,7 +1,8 @@
-use crate::cache::{CACHE_FILE, Key, ResultCache};
+use crate::cache::{CACHE_FILE, Entry, Key, ResultCache};
+use crate::check::{accepts, check_hash, verdict};
 use crate::compiler::{Compiler, SCRATCH_PREFIX, canonicalize};
 use crate::exec::run_executable;
-use crate::{Error, Limits, Result, RunResult};
+use crate::{Check, Error, Limits, Result, RunResult, Verdict};
 use log::warn;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,12 +20,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 struct Task {
-    executable: Arc<Path>,
-    input: Arc<str>,
-    limits: Limits,
-    cache_key: Option<Key>,
     cancelled: Arc<AtomicBool>,
-    sender: mpsc::Sender<Result<RunResult>>,
+    job: Box<dyn FnOnce(&ResultCache) + Send>,
 }
 
 #[derive(Default)]
@@ -58,38 +55,41 @@ impl Shared {
 
     fn work(&self) {
         while let Some(task) = self.next_task() {
-            if task.cancelled.load(Ordering::Relaxed) {
-                continue;
+            if !task.cancelled.load(Ordering::Relaxed) {
+                (task.job)(&self.cache);
             }
-            let result = catch_unwind(AssertUnwindSafe(|| run_executable(&task.executable, &task.input, task.limits))).unwrap_or_else(|_panic| Err(Error::run_failed("the worker thread panicked")));
-            if let (Some(key), Ok(result)) = (task.cache_key, &result) {
-                self.cache.insert(key, result);
-            }
-            let _ = task.sender.send(result);
         }
     }
 }
 
-/// A run queued by [`Runner::spawn`].
+/// A run queued by [`Runner::spawn`], [`Runner::spawn_checked`] or [`Runner::spawn_check`].
 #[must_use = "a run is only useful if it is waited for"]
-pub struct RunHandle {
-    receiver: mpsc::Receiver<Result<RunResult>>,
+pub struct RunHandle<T = RunResult> {
+    receiver: mpsc::Receiver<Result<T>>,
     cancelled: Arc<AtomicBool>,
+    cached: bool,
 }
 
-impl RunHandle {
-    fn finished(result: RunResult) -> Self {
+impl<T> RunHandle<T> {
+    fn finished(result: T, cached: bool) -> Self {
         let (sender, receiver) = mpsc::channel();
         let _ = sender.send(Ok(result));
         Self {
             receiver,
             cancelled: Arc::new(AtomicBool::new(false)),
+            cached,
         }
     }
 
     /// Waits for the run to end. [`Error::Cancelled`] if it was cancelled before it started.
-    pub fn wait(self) -> Result<RunResult> {
+    pub fn wait(self) -> Result<T> {
         self.receiver.recv().unwrap_or(Err(Error::Cancelled))
+    }
+
+    /// Whether the result came from the result cache, without running the program.
+    #[must_use]
+    pub const fn is_cached(&self) -> bool {
+        self.cached
     }
 
     /// Skips the run if it has not started yet; a run already going is not stopped. Dropping the
@@ -99,7 +99,7 @@ impl RunHandle {
     }
 }
 
-impl Drop for RunHandle {
+impl<T> Drop for RunHandle<T> {
     fn drop(&mut self) {
         self.cancel();
     }
@@ -179,9 +179,10 @@ impl Runner {
         self.shared.work.notify_all();
     }
 
-    /// Whether results are looked up in and added to the result cache, which holds every time out,
-    /// memory limit and crash, and successful runs whose output is at most
-    /// [`MAX_CACHED_OUTPUT_BYTES`](crate::MAX_CACHED_OUTPUT_BYTES). On by default.
+    /// Whether results are looked up in and added to the result cache, which holds every verdict,
+    /// time out, memory limit and crash, and successful runs whose output is at most
+    /// [`MAX_CACHED_OUTPUT_BYTES`](crate::MAX_CACHED_OUTPUT_BYTES). Of two results of the same run,
+    /// it keeps the better: a pass over a failure, then the faster. On by default.
     pub fn set_result_cache(&self, enabled: bool) {
         self.caching.store(enabled, Ordering::Relaxed);
     }
@@ -222,23 +223,84 @@ impl Runner {
         self.queue_run(source_code, input.into(), limits, false)
     }
 
+    /// As [`spawn`](Self::spawn), but the output is checked against `answer` and only the verdict
+    /// is kept. Verdicts are small, so they are always cached.
+    pub fn spawn_checked<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<Verdict>> {
+        self.queue_checked(source_code, input.into(), answer.into(), check, limits, true)
+    }
+
+    /// As [`spawn_checked`](Self::spawn_checked), but never uses a cached verdict.
+    pub fn spawn_checked_fresh<I: Into<Arc<str>>, A: Into<Arc<str>>>(&self, source_code: &str, input: I, answer: A, check: &Check, limits: Limits) -> Result<RunHandle<Verdict>> {
+        self.queue_checked(source_code, input.into(), answer.into(), check, limits, false)
+    }
+
+    /// Queues checking `output` against `answer`: whether `check` accepts it. Only a checker program
+    /// is really queued.
+    pub fn spawn_check<I: Into<Arc<str>>, A: Into<Arc<str>>, O: Into<Arc<str>>>(&self, check: &Check, input: I, answer: A, output: O) -> Result<RunHandle<bool>> {
+        let (input, answer, output) = (input.into(), answer.into(), output.into());
+        let Some((_, checker)) = self.checker(check)? else {
+            return Ok(RunHandle::finished(accepts(None, &self.build_folder, &input, &answer, &output)?, false));
+        };
+        let build_folder = self.build_folder.clone();
+        self.queue(move |_cache| accepts(Some(&checker), &build_folder, &input, &answer, &output))
+    }
+
+    fn caching(&self) -> bool {
+        self.caching.load(Ordering::Relaxed)
+    }
+
+    fn checker(&self, check: &Check) -> Result<Option<(u64, Arc<Path>)>> {
+        match check {
+            Check::Tokens => Ok(None),
+            Check::Program(source_code) => self.executable(source_code).map(Some),
+        }
+    }
+
     fn queue_run(&self, source_code: &str, input: Arc<str>, limits: Limits, use_cached: bool) -> Result<RunHandle> {
         let (hash, executable) = self.executable(source_code)?;
-        let cache_key = self.caching.load(Ordering::Relaxed).then(|| Key::new(hash, &input, limits));
-        if use_cached && let Some(cached) = cache_key.and_then(|key| self.shared.cache.get(&key)) {
-            return Ok(RunHandle::finished(cached));
+        let key = self.caching().then(|| Key::new(hash, &input, limits));
+        if use_cached && let Some(Entry::Run(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
+            return Ok(RunHandle::finished(cached, true));
         }
+        self.queue(move |cache| {
+            let result = run_executable(&executable, &[], &input, limits)?;
+            if let Some(key) = key {
+                cache.insert_run(key, &result);
+            }
+            Ok(result)
+        })
+    }
 
+    fn queue_checked(&self, source_code: &str, input: Arc<str>, answer: Arc<str>, check: &Check, limits: Limits, use_cached: bool) -> Result<RunHandle<Verdict>> {
+        let (hash, executable) = self.executable(source_code)?;
+        let checker = self.checker(check)?;
+        let key = self.caching().then(|| Key::checked(hash, &input, check_hash(checker.as_ref().map(|&(hash, _)| hash), &answer), limits));
+        if use_cached && let Some(Entry::Checked(cached)) = key.and_then(|key| self.shared.cache.get(&key)) {
+            return Ok(RunHandle::finished(cached, true));
+        }
+        let build_folder = self.build_folder.clone();
+        self.queue(move |cache| {
+            let checker = checker.as_ref().map(|(_, checker)| &**checker);
+            let result = run_executable(&executable, &[], &input, limits)?;
+            let verdict = verdict(result, |output| accepts(checker, &build_folder, &input, &answer, output))?;
+            if let Some(key) = key {
+                cache.insert_verdict(key, verdict);
+            }
+            Ok(verdict)
+        })
+    }
+
+    fn queue<T: Send + 'static, W: FnOnce(&ResultCache) -> Result<T> + Send + 'static>(&self, work: W) -> Result<RunHandle<T>> {
         let (sender, receiver) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
+        let job = move |cache: &ResultCache| {
+            let result = catch_unwind(AssertUnwindSafe(|| work(cache))).unwrap_or_else(|_panic| Err(Error::run_failed("the worker thread panicked")));
+            let _ = sender.send(result);
+        };
         let mut queue = lock(&self.shared.queue);
         queue.tasks.push_back(Task {
-            executable,
-            input,
-            limits,
-            cache_key,
             cancelled: cancelled.clone(),
-            sender,
+            job: Box::new(job),
         });
         if queue.threads < self.workers() {
             let shared = self.shared.clone();
@@ -256,7 +318,7 @@ impl Runner {
         }
         drop(queue);
         self.shared.work.notify_one();
-        Ok(RunHandle { receiver, cancelled })
+        Ok(RunHandle { receiver, cancelled, cached: false })
     }
 
     /// Keeps `file` when [`clean_build_folder`](Self::clean_build_folder) runs.

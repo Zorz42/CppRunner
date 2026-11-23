@@ -19,7 +19,7 @@ fn read_output_stops_past_the_limit() {
 
 #[test]
 fn missing_executable_is_an_error() {
-    let result = crate::exec::run_executable(std::path::Path::new("/no/such/executable"), "", crate::Limits::default());
+    let result = crate::exec::run_executable(std::path::Path::new("/no/such/executable"), &[], "", crate::Limits::default());
     assert!(matches!(result, Err(crate::Error::RunFailed { .. })), "{result:?}");
 }
 
@@ -27,6 +27,6 @@ fn missing_executable_is_an_error() {
 fn non_executable_file_is_an_error() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), "not a program").unwrap();
-    let result = crate::exec::run_executable(file.path(), "", crate::Limits::default());
+    let result = crate::exec::run_executable(file.path(), &[], "", crate::Limits::default());
     assert!(matches!(result, Err(crate::Error::RunFailed { .. })), "{result:?}");
 }

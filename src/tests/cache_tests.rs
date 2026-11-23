@@ -1,5 +1,5 @@
-use crate::cache::{Key, MAX_CACHED_OUTPUT_BYTES, ResultCache, is_cacheable};
-use crate::{CrashReason, Limits, RunResult};
+use crate::cache::{Entry, Key, MAX_CACHED_OUTPUT_BYTES, ResultCache, is_cacheable};
+use crate::{CrashReason, Limits, RunResult, Verdict};
 use tempfile::TempDir;
 
 fn ok(output: &str) -> RunResult {
@@ -40,14 +40,14 @@ fn every_kind_of_result_survives_the_file() {
     let writer = ResultCache::new(path.clone());
     for (i, result) in every_kind().iter().enumerate() {
         for (j, &limits) in limits.iter().enumerate() {
-            writer.insert(Key::new(i as u64, &j.to_string(), limits), result);
+            writer.insert_run(Key::new(i as u64, &j.to_string(), limits), result);
         }
     }
 
     let reader = ResultCache::new(path);
     for (i, result) in every_kind().iter().enumerate() {
         for (j, &limits) in limits.iter().enumerate() {
-            assert_eq!(reader.get(&Key::new(i as u64, &j.to_string(), limits)).as_ref(), Some(result));
+            assert_eq!(reader.get(&Key::new(i as u64, &j.to_string(), limits)), Some(Entry::Run(result.clone())));
         }
     }
 }
@@ -58,7 +58,7 @@ fn uncacheable_results_are_not_stored() {
     let path = dir.path().join("results.cache");
     let cache = ResultCache::new(path.clone());
     let key = Key::new(1, "input", Limits::new());
-    cache.insert(key, &ok(&"x".repeat(MAX_CACHED_OUTPUT_BYTES + 1)));
+    cache.insert_run(key, &ok(&"x".repeat(MAX_CACHED_OUTPUT_BYTES + 1)));
     assert_eq!(cache.get(&key), None);
     assert!(!path.exists());
 }
@@ -78,14 +78,17 @@ fn damaged_lines_are_ignored() {
     let path = dir.path().join("results.cache");
     let good = ResultCache::new(path.clone());
     let key = Key::new(5, "in", Limits::new());
-    good.insert(key, &RunResult::TimedOut);
+    good.insert_run(key, &RunResult::TimedOut);
     let mut text = std::fs::read_to_string(&path).unwrap();
-    text.insert_str(0, "garbage\n0000000000000001 0000000000000002 1000 - 5 OK 1 2 -abc\n\n1 2 3 4 5 TLE extra\n");
+    text.insert_str(
+        0,
+        "garbage\n0000000000000001 0000000000000002 - 1000 - 5 OK 1 2 -abc\n\n1 2 - 3 4 5 TLE extra\n1 2 3 4 5 6 OK 1 2 -\n1 2 - 4 5 6 AC 1 2\n",
+    );
     text.push_str("0000000000000001 0000000000000002 10");
     std::fs::write(&path, text).unwrap();
 
     let reader = ResultCache::new(path);
-    assert_eq!(reader.get(&key), Some(RunResult::TimedOut));
+    assert_eq!(reader.get(&key), Some(Entry::Run(RunResult::TimedOut)));
 }
 
 #[test]
@@ -95,13 +98,65 @@ fn missing_file_is_an_empty_cache() {
 }
 
 #[test]
-fn later_lines_win() {
+fn the_better_result_is_kept() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("results.cache");
     let key = Key::new(1, "in", Limits::new());
     let cache = ResultCache::new(path.clone());
-    cache.insert(key, &RunResult::TimedOut);
-    cache.insert(key, &ok("1"));
-    assert_eq!(cache.get(&key), Some(ok("1")));
-    assert_eq!(ResultCache::new(path).get(&key), Some(ok("1")));
+    let fast = RunResult::Ok {
+        time_ms: 5,
+        memory_kb: 1,
+        output: "1".to_owned(),
+    };
+    for result in [RunResult::TimedOut, ok("1"), RunResult::Crashed(CrashReason::ExitCode(1)), fast.clone(), ok("1")] {
+        cache.insert_run(key, &result);
+    }
+    assert_eq!(cache.get(&key), Some(Entry::Run(fast.clone())));
+    assert_eq!(ResultCache::new(path.clone()).get(&key), Some(Entry::Run(fast)));
+    assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 3);
+}
+
+#[test]
+fn a_failure_does_not_replace_another() {
+    let dir = TempDir::new().unwrap();
+    let key = Key::new(1, "in", Limits::new());
+    let cache = ResultCache::new(dir.path().join("results.cache"));
+    cache.insert_run(key, &RunResult::TimedOut);
+    cache.insert_run(key, &RunResult::MemoryLimitExceeded);
+    assert_eq!(cache.get(&key), Some(Entry::Run(RunResult::TimedOut)));
+}
+
+fn every_verdict() -> Vec<Verdict> {
+    vec![
+        Verdict::Accepted { time_ms: 7, memory_kb: 890 },
+        Verdict::WrongAnswer,
+        Verdict::TimedOut,
+        Verdict::MemoryLimitExceeded,
+        Verdict::Crashed(CrashReason::ExitCode(3)),
+        Verdict::Crashed(CrashReason::Signal(6)),
+        Verdict::Crashed(CrashReason::OutputLimitExceeded),
+    ]
+}
+
+#[test]
+fn every_verdict_survives_the_file() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("results.cache");
+    let writer = ResultCache::new(path.clone());
+    for (i, &verdict) in every_verdict().iter().enumerate() {
+        writer.insert_verdict(Key::checked(i as u64, "in", 42, Limits::new()), verdict);
+    }
+    let reader = ResultCache::new(path);
+    for (i, &verdict) in every_verdict().iter().enumerate() {
+        assert_eq!(reader.get(&Key::checked(i as u64, "in", 42, Limits::new())), Some(Entry::Checked(verdict)));
+        assert_eq!(reader.get(&Key::new(i as u64, "in", Limits::new())), None);
+    }
+}
+
+#[test]
+fn checked_keys_differ_by_check() {
+    let key = Key::checked(1, "input", 2, Limits::new());
+    assert_eq!(key, Key::checked(1, "input", 2, Limits::new()));
+    assert_ne!(key, Key::checked(1, "input", 3, Limits::new()));
+    assert_ne!(key, Key::new(1, "input", Limits::new()));
 }

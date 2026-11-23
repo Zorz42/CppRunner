@@ -39,6 +39,14 @@ pub enum Error {
         details: String,
     },
 
+    /// A checker program did not accept or reject: it crashed, timed out or exited with a code
+    /// other than 0, 1 or 2.
+    #[error("The checker failed: {details}")]
+    CheckerFailed {
+        /// How it ended.
+        details: String,
+    },
+
     /// The run was cancelled, or its runner dropped, before it started.
     #[error("The run was cancelled before it started")]
     Cancelled,

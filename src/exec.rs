@@ -31,9 +31,9 @@ pub fn read_output<R: Read>(stdout: R, max_bytes: u64) -> std::io::Result<Option
 }
 
 /// Runs an already compiled executable under `limits` with `input` on stdin; its stderr is discarded.
-pub fn run_executable(executable: &Path, input: &str, limits: Limits) -> Result<RunResult> {
+pub fn run_executable(executable: &Path, args: &[&Path], input: &str, limits: Limits) -> Result<RunResult> {
     let mut command = Command::new(executable);
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    command.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     sys::limit(&mut command, limits);
     trace!("Running command: {command:?}");
     let mut program = match command.spawn() {
